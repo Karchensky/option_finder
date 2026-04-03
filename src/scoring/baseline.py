@@ -69,3 +69,24 @@ def extract_spreads(snapshots: list[OptionsSnapshot]) -> list[float]:
             if spread >= 0:
                 spreads.append(spread)
     return spreads
+
+
+def extract_implied_volatility(snapshots: list[OptionsSnapshot]) -> list[float]:
+    """Implied volatility values (decimal, e.g. 0.32 = 32%)."""
+    return [float(s.implied_volatility) for s in snapshots
+            if s.implied_volatility is not None and float(s.implied_volatility) > 0]
+
+
+def extract_vol_oi_ratios(snapshots: list[OptionsSnapshot]) -> list[float]:
+    """Volume / open-interest ratio for each day in the baseline.
+
+    Both volume and OI use the same semantics across days (OI is always
+    the prior-day settlement figure), so the ratio is consistent.
+    """
+    ratios: list[float] = []
+    for s in snapshots:
+        vol = s.volume or 0
+        oi = s.open_interest or 0
+        if oi > 0 and vol > 0:
+            ratios.append(float(vol) / float(oi))
+    return ratios

@@ -12,31 +12,41 @@ Every score computation must produce a `ScoreBreakdown` object that logs each fa
 
 ## Baseline Computation
 
-- Rolling 20-day lookback window per contract/underlying
+- Rolling 20-day lookback window per contract/underlying (60-day window planned for secondary baseline)
 - Exclude the current observation from the baseline
 - Require minimum 5 data points; skip scoring if insufficient history
-- Use `scipy.stats.zscore` or manual `(x - mean) / std` with `std` floor of 0.01 to avoid division by zero
+- Use manual `(x - mean) / std` with `std` floor of 0.01 to avoid division by zero
 
-## Scoring Factors
+## Scoring Factors (11 weighted + 1 gate)
 
-| Factor | Key | Source Field |
-|--------|-----|-------------|
-| Volume Spike | `vol_z` | contract volume vs 20d avg |
-| OI Change | `oi_z` | day-over-day open interest delta |
-| Premium Surge | `prem_z` | dollar premium (price * vol * 100) vs 20d avg |
-| OTM Clustering | `otm_z` | % of chain volume in OTM strikes |
-| Time-to-Expiry | `tte_z` | days to expiration (lower = higher signal) |
-| Bid-Ask Spread | `spread_z` | tighter spread on high volume = informed |
-| Underlying Move | `underlying_z` | correlated stock price movement |
-| Sweep Detection | `sweep_z` | simultaneous multi-exchange fills at ask |
+| Factor | Key | Weight | Source Field |
+|--------|-----|--------|-------------|
+| Volume Spike | `vol_z` | 0.18 | Contract volume vs 20-day avg |
+| Premium Surge | `prem_z` | 0.13 | Dollar premium (price * vol * 100) vs 20d avg |
+| IV Spike | `iv_z` | 0.13 | Implied volatility vs its own 20-day IV baseline |
+| Volume/OI Ratio | `vol_oi_z` | 0.12 | Today's volume / prior-day settled OI vs baseline |
+| Sweep Detection | `sweep_z` | 0.10 | Volume extremity proxy (contributes above 2 sigma) |
+| Delta Concentration | `delta_conc_z` | 0.08 | Fraction of chain volume in deep-OTM (|delta| < 0.20) |
+| OI Change | `oi_z` | 0.07 | Day-over-day OI delta vs baseline (lagging indicator) |
+| Earnings Proximity | `earnings_z` | 0.07 | Negative z-score dampener when near earnings |
+| Time-to-Expiry | `tte_z` | 0.06 | Days to expiration (lower = higher signal) |
+| Bid-Ask Spread | `spread_z` | 0.04 | Tighter spread on high volume = informed |
+| Underlying Move | `underlying_z` | 0.02 | Correlated stock price movement |
+
+## Data Semantics
+
+- **Open Interest** from Polygon is always prior-day settlement (OCC calculates after close). Not an intraday figure.
+- **Volume/OI ratio** compensates: compares today's real-time volume against yesterday's settled OI.
+- **Earnings dates** estimated from quarterly filing dates via Polygon `/vX/reference/financials`.
+- **Greeks** (delta, gamma, theta, vega) come from the option chain snapshot. Delta is used for OTM classification. IV is used as a standalone signal.
 
 ## Already Priced In Gate
 
-Because all data is 15 minutes delayed, the underlying may have already moved by the time we detect an anomaly. Before alerting, check whether the underlying stock has moved >2% in the direction of the options bet (calls → stock up, puts → stock down). If so, suppress the alert entirely — the opportunity is gone. This is a binary gate, not a weighted factor.
+Because all data is 15 minutes delayed, the underlying may have already moved by the time we detect an anomaly. Before alerting, check whether the underlying stock has moved >2% in the direction of the options bet (calls -> stock up, puts -> stock down). If so, suppress the alert entirely. This is a binary gate, not a weighted factor.
 
 ## Composite Score
 
-Weighted sum of factor z-scores, normalized to 0–10 scale. Weights are configurable but start with research-informed defaults. Alert fires when `composite_score >= ANOMALY_ALERT_MIN_SCORE` AND the already-priced-in gate has not suppressed it.
+Weighted sum of factor z-scores, normalized to 0-10 scale. Weights are configurable in `src/config/constants.py` `FACTOR_WEIGHTS`. Alert fires when `composite_score >= ANOMALY_ALERT_MIN_SCORE` AND the already-priced-in gate has not suppressed it.
 
 ## Deduplication
 

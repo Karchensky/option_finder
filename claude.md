@@ -108,8 +108,8 @@ GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
 # Ticker news with sentiment
 GET /v2/reference/news
 
-# Earnings calendar (Benzinga partner endpoint)
-GET /v1/meta/symbols/{symbol}/earnings
+# Quarterly financials with filing dates (for earnings date estimation)
+GET /vX/reference/financials?ticker={ticker}&timeframe=quarterly
 
 # Dividends, splits, corporate actions
 GET /v3/reference/dividends
@@ -143,21 +143,26 @@ Identify options activity that is statistically anomalous relative to a rolling 
 ### Approach
 Multi-factor composite score using z-scores. Each factor compares the current observation to a rolling 20-day baseline for that specific contract or underlying.
 
-### Scoring Factors
+### Scoring Factors (11 factors + gate)
 
-| Factor | What It Measures | Weight Range |
-|--------|-----------------|--------------|
-| Volume Spike | Contract volume vs 20-day avg | High |
-| OI Change | Day-over-day open interest delta | Medium |
-| Premium Surge | Dollar premium (price × volume × 100) vs baseline | High |
-| OTM Clustering | Concentration of activity in out-of-the-money strikes | Medium |
-| Time-to-Expiry | Proximity to expiration (short-dated = higher signal) | Medium |
-| Bid-Ask Spread | Tight spreads on unusual volume suggest informed flow | Low-Medium |
-| Underlying Move | Stock price movement correlated with options activity | Low |
-| Sweep Detection | Simultaneous fills across exchanges at the ask | High |
-| Already Priced In | Underlying has NOT yet moved in direction of bet (suppress if >2%) | Gate |
+| Factor | Key | Weight | What It Measures |
+|--------|-----|--------|------------------|
+| Volume Spike | `vol_z` | 0.18 | Contract volume vs 20-day average |
+| Premium Surge | `prem_z` | 0.13 | Dollar premium (price x volume x 100) vs baseline |
+| IV Spike | `iv_z` | 0.13 | Implied volatility vs own 20-day IV baseline |
+| Volume/OI Ratio | `vol_oi_z` | 0.12 | Today's volume / prior-day OI vs baseline; detects new position opening |
+| Sweep Detection | `sweep_z` | 0.10 | Volume extremity proxy (contributes when volume > 2 sigma) |
+| Delta Concentration | `delta_conc_z` | 0.08 | Fraction of chain volume in deep-OTM contracts (|delta| < 0.20) |
+| OI Change | `oi_z` | 0.07 | Day-over-day OI delta vs baseline (lagging: prior-day settlement) |
+| Earnings Proximity | `earnings_z` | 0.07 | Dampener near earnings; penalizes expected pre-earnings volume |
+| Time-to-Expiry | `tte_z` | 0.06 | Shorter DTE = stronger signal (< 14 DTE contributes positively) |
+| Bid-Ask Spread | `spread_z` | 0.04 | Tighter-than-normal spread on unusual volume |
+| Underlying Move | `underlying_z` | 0.02 | Stock move correlated with bet direction |
+| Already Priced In | — | Gate | Suppresses alert if underlying moved >2% in bet direction |
 
-The "Already Priced In" factor is a gate, not a weighted contributor. If the underlying has already moved >2% in the direction implied by the options activity (calls + stock up, puts + stock down), the alert is suppressed entirely regardless of composite score. This accounts for our 15-minute data delay.
+The "Already Priced In" factor is a binary gate, not a weighted contributor. If the underlying has already moved >2% in the direction implied by the options activity (calls + stock up, puts + stock down), the alert is suppressed entirely regardless of composite score. This accounts for our 15-minute data delay.
+
+Open interest from Polygon's snapshot API is always prior-day settlement (not intraday). The Volume/OI ratio factor compensates by comparing today's real-time volume against yesterday's OI. Earnings dates are estimated from quarterly filing dates via `/vX/reference/financials`.
 
 ### Composite Score
 Weighted sum of factor z-scores normalized to 0-10 scale. Alert threshold: configurable via `ANOMALY_ALERT_MIN_SCORE` (default 7.5).

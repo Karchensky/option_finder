@@ -1,4 +1,4 @@
-"""Composite score computation — aggregate factors into a 0-10 score."""
+"""Composite score computation -- aggregate factors into a 0-10 score."""
 
 import logging
 from datetime import date, datetime
@@ -6,15 +6,17 @@ from datetime import date, datetime
 from src.config.constants import COMPOSITE_SCORE_MAX
 from src.config.settings import get_settings
 from src.database.models import OptionsSnapshot
-from src.scoring.baseline import compute_baseline, extract_volumes
 from src.scoring.factors import (
+    compute_delta_concentration,
+    compute_earnings_proximity,
+    compute_iv_spike,
     compute_oi_change,
-    compute_otm_clustering,
     compute_premium_surge,
     compute_spread,
     compute_sweep_detection,
     compute_time_to_expiry,
     compute_underlying_move,
+    compute_vol_oi_ratio,
     compute_volume_spike,
 )
 from src.scoring.gate import check_already_priced_in
@@ -30,11 +32,12 @@ def score_contract(
     underlying_price: float,
     underlying_change_pct: float,
     snap_date: date,
+    days_to_earnings: int | None = None,
 ) -> ScoreBreakdown:
     """Compute the full composite score for a single option contract.
 
     Returns a ScoreBreakdown regardless of whether the alert threshold
-    is met — the caller decides whether to act on it.
+    is met -- the caller decides whether to act on it.
     """
     settings = get_settings()
     ticker = current.underlying_ticker
@@ -46,44 +49,59 @@ def score_contract(
     current_close = float(current.close) if current.close is not None else 0.0
     current_bid = float(current.bid) if current.bid is not None else None
     current_ask = float(current.ask) if current.ask is not None else None
+    current_iv = float(current.implied_volatility) if current.implied_volatility is not None else 0.0
 
     factors: dict[str, FactorScore] = {}
 
+    # --- Tier 1: primary volume/flow signals ---
     try:
         factors["vol_z"] = compute_volume_spike(current_volume, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["vol_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.25, contribution=0.0)
+        factors["vol_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.18, contribution=0.0)
 
     try:
         factors["prem_z"] = compute_premium_surge(current_close, current_volume, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["prem_z"] = FactorScore(raw=current_close * current_volume * 100, z_score=0.0, weight=0.20, contribution=0.0)
+        factors["prem_z"] = FactorScore(raw=current_close * current_volume * 100, z_score=0.0, weight=0.13, contribution=0.0)
+
+    try:
+        factors["iv_z"] = compute_iv_spike(current_iv, baseline_snapshots, ticker=contract)
+    except Exception:
+        factors["iv_z"] = FactorScore(raw=current_iv, z_score=0.0, weight=0.13, contribution=0.0)
+
+    try:
+        factors["vol_oi_z"] = compute_vol_oi_ratio(current_volume, current_oi, baseline_snapshots, ticker=contract)
+    except Exception:
+        factors["vol_oi_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.12, contribution=0.0)
 
     try:
         factors["sweep_z"] = compute_sweep_detection(current_volume, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["sweep_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.15, contribution=0.0)
+        factors["sweep_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.10, contribution=0.0)
+
+    # --- Tier 2: structural positioning ---
+    factors["delta_conc_z"] = compute_delta_concentration(chain_snapshots, underlying_price)
 
     try:
         factors["oi_z"] = compute_oi_change(current_oi, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["oi_z"] = FactorScore(raw=float(current_oi), z_score=0.0, weight=0.15, contribution=0.0)
+        factors["oi_z"] = FactorScore(raw=float(current_oi), z_score=0.0, weight=0.07, contribution=0.0)
 
-    factors["otm_z"] = compute_otm_clustering(chain_snapshots, underlying_price)
+    factors["earnings_z"] = compute_earnings_proximity(days_to_earnings)
 
     exp_date = current.expiration_date
     factors["tte_z"] = compute_time_to_expiry(exp_date, snap_date)
 
+    # --- Tier 3: supporting context ---
     try:
         factors["spread_z"] = compute_spread(current_bid, current_ask, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["spread_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.05, contribution=0.0)
+        factors["spread_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.04, contribution=0.0)
 
     factors["underlying_z"] = compute_underlying_move(underlying_change_pct, contract_type)
 
-    # Weighted sum → normalise to 0-10
+    # Weighted sum -> normalise to 0-10
     raw_composite = sum(f.contribution for f in factors.values())
-    # Scale: empirical tuning; start with 2.0 as the scale factor
     normalized = min(COMPOSITE_SCORE_MAX, max(0.0, raw_composite * 2.0))
 
     priced_in = check_already_priced_in(contract_type, underlying_change_pct)
@@ -108,11 +126,12 @@ def score_contract(
     )
 
     logger.info(
-        "scored %s | composite=%.2f triggered=%s priced_in=%s",
+        "scored %s | composite=%.2f triggered=%s priced_in=%s earnings=%s",
         contract,
         normalized,
         triggered,
         priced_in,
+        days_to_earnings,
         extra={"ticker": ticker, "contract": contract, "score": normalized},
     )
 

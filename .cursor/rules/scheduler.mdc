@@ -17,15 +17,17 @@ alwaysApply: false
 Run continuously during market hours. Each cycle:
 
 ```
-1. Check market status → skip if closed
+1. Check market status via Polygon API → skip if closed/holiday
 2. Fetch stock market snapshot (all US stocks)
 3. Fetch option chain snapshots (paginate through all underlyings)
 4. Upsert to database
-5. Score all contracts with meaningful activity
-6. Apply already-priced-in gate
-7. Send alerts for triggered signals
-8. Log cycle stats (duration, contracts scanned, alerts fired/suppressed)
-9. Begin next cycle immediately (no artificial delay)
+5. Fetch earnings date for each underlying (Polygon /vX/reference/financials)
+6. Score all contracts with meaningful activity (11 factors)
+7. Persist all scoring results to scoring_results table
+8. Apply already-priced-in gate
+9. Send alerts for triggered signals
+10. Log cycle stats (duration, contracts scanned, alerts fired/suppressed)
+11. Sleep until 15-minute cycle interval expires (matching Polygon data delay)
 ```
 
 ## Resilience

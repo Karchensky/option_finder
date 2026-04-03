@@ -31,13 +31,19 @@ class FactorWeight:
 
 
 FACTOR_WEIGHTS: tuple[FactorWeight, ...] = (
-    FactorWeight("vol_z", 0.25),
-    FactorWeight("prem_z", 0.20),
-    FactorWeight("sweep_z", 0.15),
-    FactorWeight("oi_z", 0.15),
-    FactorWeight("otm_z", 0.10),
-    FactorWeight("tte_z", 0.08),
-    FactorWeight("spread_z", 0.05),
+    # Tier 1 -- primary volume/flow signals
+    FactorWeight("vol_z", 0.18),
+    FactorWeight("prem_z", 0.13),
+    FactorWeight("iv_z", 0.13),
+    FactorWeight("vol_oi_z", 0.12),
+    FactorWeight("sweep_z", 0.10),
+    # Tier 2 -- structural positioning
+    FactorWeight("delta_conc_z", 0.08),
+    FactorWeight("oi_z", 0.07),       # lagging indicator (prior-day settlement)
+    FactorWeight("earnings_z", 0.07),  # negative z-score near earnings = dampener
+    FactorWeight("tte_z", 0.06),
+    # Tier 3 -- supporting context
+    FactorWeight("spread_z", 0.04),
     FactorWeight("underlying_z", 0.02),
 )
 

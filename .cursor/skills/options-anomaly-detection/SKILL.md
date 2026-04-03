@@ -18,39 +18,40 @@ Unusual options activity that deviates significantly from historical norms, part
 
 ## Signal Taxonomy
 
-### Tier 1 — High Signal Value
+### Tier 1 -- High Signal Value
 
-**Volume Spike**: Single-day contract volume exceeding 3+ standard deviations above the 20-day rolling mean. Most reliable when concentrated in specific strikes/expirations rather than spread across the chain.
+**Volume Spike** (`vol_z`, weight 0.18): Single-day contract volume exceeding 3+ standard deviations above the 20-day rolling mean. Most reliable when concentrated in specific strikes/expirations rather than spread across the chain.
 
-**Premium Surge**: Total dollar premium (price x volume x 100) for a contract or underlying's chain far exceeding baseline. Captures both volume and price conviction simultaneously.
+**Premium Surge** (`prem_z`, weight 0.13): Total dollar premium (price x volume x 100) for a contract far exceeding baseline. Captures both volume and price conviction simultaneously.
 
-**Sweep Orders**: Options bought simultaneously across multiple exchanges at the ask price, indicating urgency. Detected via trade condition codes (Polygon condition code analysis) and multi-exchange fill clustering within short time windows.
+**IV Spike** (`iv_z`, weight 0.13): Implied volatility surging relative to its own 20-day history. The market is pricing in an imminent event, independent of volume -- a strong signal that complements flow-based factors.
 
-### Tier 2 — Medium Signal Value
+**Volume/OI Ratio** (`vol_oi_z`, weight 0.12): Today's volume divided by prior-day settled open interest, z-scored against its 20-day baseline. A ratio > 1.0 means more contracts traded today than exist in open positions -- strongly suggests new position opening rather than closing.
 
-**Open Interest Change**: Large day-over-day OI increase paired with volume spike suggests new position opening (not closing). A volume spike without OI change may indicate day-trading, which is less informative.
+**Sweep Orders** (`sweep_z`, weight 0.10): Currently a volume-extremity proxy (only contributes when volume > 2 sigma above mean). True sweep detection requires trade-level condition codes and multi-exchange fill clustering.
 
-**OTM Clustering**: Disproportionate volume in out-of-the-money options (delta < 0.30 for calls, delta > -0.30 for puts). Informed traders often buy cheap OTM options for leverage on expected moves.
+### Tier 2 -- Medium Signal Value
 
-**Time-to-Expiry Bias**: Unusually heavy volume in near-term expirations (< 14 DTE) suggests a trader expects a catalyst soon. Short-dated options provide maximum leverage for informed bets.
+**Delta Concentration** (`delta_conc_z`, weight 0.08): Fraction of chain volume in deep-OTM contracts, using |delta| < 0.20 from greeks. Falls back to strike/price comparison when greeks are unavailable. Informed traders often buy cheap OTM options for leverage.
 
-### Tier 3 — Supporting Signals
+**Open Interest Change** (`oi_z`, weight 0.07): Day-over-day OI delta vs baseline. Note: OI is always the prior-day settlement figure (OCC calculates after market close). This is a valid but lagging signal, complemented by the real-time Volume/OI ratio.
 
-**Bid-Ask Spread Compression**: When unusual volume coincides with tighter-than-normal spreads, it suggests market makers are accommodating informed flow (or that the order size is large enough to attract liquidity).
+**Earnings Proximity** (`earnings_z`, weight 0.07): Dampener that applies a negative z-score when the underlying is within 14 days of an earnings report. Options volume naturally spikes before earnings -- this prevents flagging expected pre-earnings activity as anomalous. Earnings dates estimated from quarterly filing dates via Polygon `/vX/reference/financials`.
 
-**Underlying Price Correlation**: Stock price moving in the direction of the options bet on the same day. Adds conviction when present but absence does not invalidate — informed traders often act before the stock moves.
+**Time-to-Expiry Bias** (`tte_z`, weight 0.06): Short-dated options (< 14 DTE) receive positive signal. Unusually heavy volume in near-term expirations suggests a trader expects a catalyst soon.
 
-**Call/Put Skew Shift**: Sudden change in the put-call ratio or implied volatility skew for a specific expiration.
+### Tier 3 -- Supporting Signals
 
-### Gate — Already Priced In
+**Bid-Ask Spread Compression** (`spread_z`, weight 0.04): Tighter-than-normal spreads on unusual volume suggest market makers are accommodating informed flow.
 
-All our data is 15 minutes delayed. By the time we observe an options anomaly, the underlying stock may have already moved in the direction of the bet. This filter is a hard gate (not a weighted factor):
+**Underlying Price Correlation** (`underlying_z`, weight 0.02): Stock price moving in the direction of the options bet. Adds conviction when present but absence does not invalidate.
 
-- Compute the underlying stock's % move since the options activity was recorded
-- If calls are the anomaly and the stock is already up >2%, suppress
-- If puts are the anomaly and the stock is already down >2%, suppress
-- This prevents alerting on opportunities that have already passed
-- The 2% threshold is configurable and should be tuned via backtesting
+### Gate -- Already Priced In
+
+Binary suppression gate (not a weighted factor). If the underlying has already moved >2% in the direction of the bet:
+- Calls anomaly + stock already up >2% -> suppress
+- Puts anomaly + stock already down >2% -> suppress
+This accounts for the 15-minute data delay. Threshold is configurable.
 
 ## Distinguishing Insider Trading from Legitimate Flow
 
@@ -58,10 +59,11 @@ All our data is 15 minutes delayed. By the time we observe an options anomaly, t
 
 - Activity concentrated in 1-2 specific strikes/expirations (not spread across chain)
 - OTM options with short time to expiry
-- New positions (volume > prior OI)
+- New positions (volume > prior OI, high vol/OI ratio)
 - Occurs in liquid names with normally low options volume for that strike
 - No corresponding news, analyst upgrades, or known catalysts
 - Timing: 1-10 days before catalyst materializes
+- IV spiking without a known catalyst
 
 ### Likely Institutional/Hedging (Lower Score)
 
@@ -69,7 +71,7 @@ All our data is 15 minutes delayed. By the time we observe an options anomaly, t
 - ATM or ITM options (delta hedging)
 - Volume roughly matches prior OI (position closing/rolling)
 - Correlated with index or sector-wide flows
-- Follows known catalyst (earnings date is public, FDA date is known)
+- Near earnings date (expected volume increase, dampened by earnings_z)
 - Large block trades at mid-price (negotiated, not urgent)
 
 ## Statistical Methodology
@@ -81,6 +83,8 @@ For each contract (or underlying aggregate), maintain a 20-trading-day rolling w
 - Daily OI
 - Daily dollar premium
 - Daily implied volatility
+- Daily volume/OI ratio
+- Daily bid-ask spread
 
 Exclude current observation from baseline. Require minimum 5 data points.
 
@@ -90,7 +94,7 @@ Exclude current observation from baseline. Require minimum 5 data points.
 z = (observed - mean_baseline) / max(std_baseline, floor)
 ```
 
-Use `floor = 0.01` to prevent division by zero on low-activity contracts. For contracts with zero baseline volume, use the underlying's aggregate baseline instead.
+Use `floor = 0.01` to prevent division by zero on low-activity contracts.
 
 ### Multi-Factor Composite Score
 
@@ -99,20 +103,21 @@ composite = sum(factor.z_score * factor.weight for factor in factors)
 normalized = min(10.0, max(0.0, composite * scale_factor))
 ```
 
-Starting weights (tunable):
+Current weights (11 factors, sum = 1.00):
 
-| Factor | Weight |
-|--------|--------|
-| vol_z (volume spike) | 0.25 |
-| prem_z (premium surge) | 0.20 |
-| sweep_z (sweep detection) | 0.15 |
-| oi_z (OI change) | 0.15 |
-| otm_z (OTM clustering) | 0.10 |
-| tte_z (time-to-expiry) | 0.08 |
-| spread_z (bid-ask) | 0.05 |
-| underlying_z (stock move) | 0.02 |
-
-Total = 1.00. Adjust based on backtesting performance.
+| Factor | Key | Weight |
+|--------|-----|--------|
+| Volume Spike | `vol_z` | 0.18 |
+| Premium Surge | `prem_z` | 0.13 |
+| IV Spike | `iv_z` | 0.13 |
+| Volume/OI Ratio | `vol_oi_z` | 0.12 |
+| Sweep Detection | `sweep_z` | 0.10 |
+| Delta Concentration | `delta_conc_z` | 0.08 |
+| OI Change | `oi_z` | 0.07 |
+| Earnings Proximity | `earnings_z` | 0.07 |
+| Time-to-Expiry | `tte_z` | 0.06 |
+| Bid-Ask Spread | `spread_z` | 0.04 |
+| Underlying Move | `underlying_z` | 0.02 |
 
 ### Alert Threshold
 
@@ -150,7 +155,7 @@ Compare signal performance against:
 
 ## Key Academic & Industry References
 
-- Augustin, Brenner, Hu, Subrahmanyam (2019): "Informed Options Trading Prior to M&A" — documents systematic options activity 1-5 days before M&A announcements
-- Cremers, Fodor, Weinbaum (2021): "Where Does Informed Trading Happen in Options Markets?" — sweep orders and aggressive limit orders carry the most signal
-- CBOE / OCC daily volume reports — public baseline for market-wide options activity norms
-- SEC enforcement actions database — historical cases of options-based insider trading provide labeled positive examples for validation
+- Augustin, Brenner, Hu, Subrahmanyam (2019): "Informed Options Trading Prior to M&A" -- documents systematic options activity 1-5 days before M&A announcements
+- Cremers, Fodor, Weinbaum (2021): "Where Does Informed Trading Happen in Options Markets?" -- sweep orders and aggressive limit orders carry the most signal
+- CBOE / OCC daily volume reports -- public baseline for market-wide options activity norms
+- SEC enforcement actions database -- historical cases of options-based insider trading provide labeled positive examples for validation
