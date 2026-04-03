@@ -1,0 +1,50 @@
+---
+description: Python coding standards for Option Finder
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python Standards
+
+## Data Validation & Config
+
+- Use `pydantic.BaseModel` for all data structures crossing module boundaries
+- Use `pydantic_settings.BaseSettings` for configuration loaded from `.env`
+- Validate API responses with Pydantic models before storing
+
+## HTTP & Async
+
+- Use `httpx.AsyncClient` for all Polygon API calls
+- Prefer `async/await` for I/O-bound work; use `asyncio.gather` for parallel fetches
+- Always set reasonable timeouts (`httpx.Timeout(30.0)`)
+- Handle pagination: follow `next_url` until exhausted
+
+## SQLAlchemy 2.0
+
+- Declarative models with `mapped_column` (not legacy `Column`)
+- Use `AsyncSession` for database operations
+- Repository pattern: one repository class per domain entity
+- Never construct raw SQL strings — use the ORM or `text()` with bound params
+
+## Error Handling
+
+```python
+class OptionFinderError(Exception): ...
+class PolygonAPIError(OptionFinderError): ...
+class ScoringError(OptionFinderError): ...
+class AlertError(OptionFinderError): ...
+```
+
+- Catch specific exceptions; never bare `except:`
+- Log the exception with context before re-raising or wrapping
+
+## Logging
+
+- `logger = logging.getLogger(__name__)` at module top
+- Include structured context: `logger.info("scored", extra={"ticker": ..., "score": ...})`
+
+## Testing
+
+- pytest with `pytest-asyncio` for async tests
+- Fixtures in `conftest.py` per module
+- Mock all external I/O (Polygon API, SMTP, database) in unit tests

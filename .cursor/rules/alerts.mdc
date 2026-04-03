@@ -1,0 +1,37 @@
+---
+description: Email alert system conventions for Option Finder
+globs: "**/alerts/**/*.py"
+alwaysApply: false
+---
+
+# Alert System Conventions
+
+## Email Delivery
+
+- Gmail SMTP over SSL (port 465) via `smtplib.SMTP_SSL`
+- Credentials from env: `SENDER_EMAIL`, `EMAIL_PASSWORD`, `RECIPIENT_EMAIL`
+- Kill switch: `ANOMALY_EMAIL_ENABLED` (must be true to send)
+- Send as HTML with plain-text fallback (MIME multipart)
+
+## Alert Content
+
+Every alert email must include:
+- Underlying ticker and full option contract identifier
+- Composite score and full factor breakdown (raw, z-score, weight, contribution per factor)
+- Current option price, volume, open interest
+- Underlying stock price and % move
+- Time since anomaly detected vs. current data lag
+- Relevant news headlines (last 24h from Polygon news endpoint)
+- Upcoming catalysts if available (earnings date, ex-dividend)
+
+## Deduplication
+
+- Track alerts sent per contract per trading day in the database
+- Do not re-alert on the same contract unless composite score increases by 1.0+
+- Include "update" label in subject line for score-increase re-alerts
+
+## Error Handling
+
+- Wrap all SMTP operations in try/except; log failures but never crash the pipeline
+- Queue failed alerts for retry on next scan cycle (max 3 retries)
+- Log every sent/failed/suppressed alert with full context

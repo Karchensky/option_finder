@@ -1,0 +1,43 @@
+---
+description: Database and model conventions for Option Finder
+globs: "**/database/**/*.py,**/models/**/*.py,**/migrations/**/*.py"
+alwaysApply: false
+---
+
+# Database Conventions
+
+## PostgreSQL Schema Rules
+
+- Table and column names: `snake_case`
+- Every table: `id BIGSERIAL PRIMARY KEY`, `created_at TIMESTAMPTZ DEFAULT NOW()`, `updated_at TIMESTAMPTZ`
+- Prices: `NUMERIC(12,4)` — never `FLOAT` or `DOUBLE PRECISION`
+- Timestamps: `TIMESTAMPTZ` stored in UTC
+- Option tickers stored as `VARCHAR(30)` (e.g. `O:AAPL251219C00150000`)
+
+## Indexing Strategy
+
+- Composite index on `(ticker, date)` for all market data tables
+- Partial index on `(composite_score)` WHERE `composite_score >= threshold` for alert queries
+- Index `(underlying_ticker, expiration_date)` on options tables
+
+## Partitioning
+
+- Partition `options_snapshots` and `minute_aggs` tables by date (monthly range partitions)
+- Use PostgreSQL native declarative partitioning
+
+## Migrations
+
+- Alembic with async driver (`asyncpg`)
+- One migration per logical change; descriptive revision messages
+- Always include both `upgrade()` and `downgrade()`
+
+## Repository Pattern
+
+```python
+class OptionsSnapshotRepo:
+    def __init__(self, session: AsyncSession): ...
+    async def upsert_snapshot(self, data: SnapshotCreate) -> None: ...
+    async def get_baseline(self, ticker: str, lookback_days: int = 20) -> list[SnapshotRow]: ...
+```
+
+Each domain entity gets its own repository. Business logic stays out of repositories.

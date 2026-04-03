@@ -1,0 +1,35 @@
+---
+description: Streamlit dashboard conventions for Option Finder
+globs: "**/dashboard/**/*.py"
+alwaysApply: false
+---
+
+# Streamlit Dashboard Conventions
+
+## Caching
+
+- `@st.cache_resource` for database engine / connection pool (singleton)
+- `@st.cache_data(ttl=300)` for query results (5-minute TTL during market hours)
+
+## Layout
+
+- Sidebar: filters (ticker search, date range picker, score threshold slider, call/put toggle)
+- Main area: `st.columns` for KPI metrics at top, data tables and charts below
+- Use `st.metric` for key stats (alerts today, avg score, top ticker)
+- Use `st.dataframe` with column config for interactive tables
+
+## Pages
+
+- **Alert Feed**: Live/recent alerts with score breakdowns
+- **Ticker Lookup**: Deep-dive into a specific ticker's options chain and historical anomalies
+- **Backtesting**: Run and visualize TP500 strategy results
+- **System Status**: Pipeline health, last run times, data freshness
+
+## Data Flow
+
+Dashboard reads from PostgreSQL only — never calls Polygon API directly. All data is pre-ingested by the pipeline.
+
+## Charting
+
+- Use Plotly (`st.plotly_chart`) for interactive volume/OI/score timeseries
+- Consistent color scheme: anomaly highlights in red/orange, baseline in grey

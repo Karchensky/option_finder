@@ -1,0 +1,38 @@
+---
+description: Backtesting framework conventions for Option Finder
+globs: "**/backtest/**/*.py"
+alwaysApply: false
+---
+
+# Backtesting Conventions
+
+## Default Strategy: TP500
+
+1. **Entry**: Option close price on signal day (day the anomaly was detected)
+2. **Exit**: First subsequent session where option close >= 5x entry, OR hold to expiration
+3. **Outcome**: Win (hit 5x) or loss (expired below 5x, typically worthless)
+
+## Data Source
+
+Backtest against historical data stored in PostgreSQL. Never call the Polygon API during backtesting — all data must be pre-ingested.
+
+## Metrics (compute for every backtest run)
+
+- **Hit Rate**: % of signals that reach TP500
+- **Average Return**: Mean return across all signals including full losses
+- **Profit Factor**: Sum of winning returns / abs(sum of losing returns)
+- **Time to Exit**: Average trading days from signal to 5x (winners only)
+- **Score Calibration**: Hit rate bucketed by score range (7.5-8.0, 8.0-8.5, etc.)
+- **Factor Attribution**: Hit rate when each factor is above/below median
+
+## Baseline Comparison
+
+Every backtest must include a control group:
+- Random option selection with matched strike/expiry profile, random entry day
+- Same-period market-wide option returns
+
+## Reproducibility
+
+- Log all parameters: date range, score threshold, factor weights, TP multiple
+- Store backtest results in a dedicated `backtest_runs` table
+- Every run is identified by a UUID and timestamp

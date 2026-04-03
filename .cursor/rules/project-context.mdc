@@ -1,0 +1,38 @@
+---
+description: Core project context and conventions for Option Finder
+alwaysApply: true
+---
+
+# Option Finder — Project Context
+
+Read `claude.md` at the project root for the full specification. This rule summarizes the essentials.
+
+## What This Project Does
+
+Scans the US options market via Polygon.io, compares activity to a statistical baseline, and emails low-frequency high-conviction alerts for human review. Not an auto-trading system.
+
+## Module Dependency Order
+
+`database` → `ingestion` → `scoring` → `alerts` → `dashboard`
+
+## Stack Quick Reference
+
+- Python 3.11, async where I/O-bound
+- PostgreSQL + SQLAlchemy 2.0 + Alembic
+- `httpx` for HTTP, `pydantic-settings` for config
+- Streamlit dashboard, APScheduler for pipeline
+
+## Critical Constraint: 15-Minute Data Delay
+
+All Polygon data is 15 minutes delayed. The system is a delayed-snapshot comparator, not a real-time scanner. The "already priced in" gate suppresses alerts where the underlying has already moved >2% in the direction of the bet. Scan continuously during market hours to catch anomalies as early as possible within the delay window.
+
+## Non-Negotiables
+
+- Type hints on every function signature and return
+- `logging` module only — never `print()`
+- Config from env vars via `pydantic-settings`
+- All prices stored as `NUMERIC`, timestamps as `TIMESTAMPTZ` (UTC)
+- Custom exception hierarchy — never bare `except:`
+- Every scoring factor must be logged with its weight and z-score
+- Alerts must pass the "already priced in" gate before sending
+- Polygon.io and Massive are the same company/API — use `POLYGON_` prefix for all env vars

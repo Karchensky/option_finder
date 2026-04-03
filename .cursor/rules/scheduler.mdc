@@ -1,0 +1,41 @@
+---
+description: Pipeline scheduler and orchestration conventions for Option Finder
+globs: "**/scheduler/**/*.py"
+alwaysApply: false
+---
+
+# Scheduler Conventions
+
+## Market Hours
+
+- Trading hours: 9:30 AM - 4:00 PM Eastern Time
+- Check market status via Polygon `GET /v1/marketstatus/now` before each cycle
+- Skip scans on market holidays (cache holiday calendar from Polygon at start of day)
+
+## Scan Loop
+
+Run continuously during market hours. Each cycle:
+
+```
+1. Check market status → skip if closed
+2. Fetch stock market snapshot (all US stocks)
+3. Fetch option chain snapshots (paginate through all underlyings)
+4. Upsert to database
+5. Score all contracts with meaningful activity
+6. Apply already-priced-in gate
+7. Send alerts for triggered signals
+8. Log cycle stats (duration, contracts scanned, alerts fired/suppressed)
+9. Begin next cycle immediately (no artificial delay)
+```
+
+## Resilience
+
+- Wrap the full cycle in try/except — log errors, wait 60 seconds, retry
+- If a single underlying's option chain fetch fails, log and continue to the next
+- Track consecutive failures; alert operator (separate from trading alerts) after 5 consecutive cycle failures
+
+## Startup & Shutdown
+
+- On startup: verify DB connection, verify Polygon API key, fetch market calendar
+- On shutdown (SIGINT/SIGTERM): complete current cycle, then exit cleanly
+- Log start/stop events with timestamps

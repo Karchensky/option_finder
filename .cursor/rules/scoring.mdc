@@ -1,0 +1,58 @@
+---
+description: Scoring engine and signal generation conventions for Option Finder
+globs: "**/scoring/**/*.py,**/signals/**/*.py"
+alwaysApply: false
+---
+
+# Scoring Engine Conventions
+
+## Transparency First
+
+Every score computation must produce a `ScoreBreakdown` object that logs each factor's raw value, z-score, weight, and weighted contribution. Alerts are only useful if a human can audit why they fired.
+
+## Baseline Computation
+
+- Rolling 20-day lookback window per contract/underlying
+- Exclude the current observation from the baseline
+- Require minimum 5 data points; skip scoring if insufficient history
+- Use `scipy.stats.zscore` or manual `(x - mean) / std` with `std` floor of 0.01 to avoid division by zero
+
+## Scoring Factors
+
+| Factor | Key | Source Field |
+|--------|-----|-------------|
+| Volume Spike | `vol_z` | contract volume vs 20d avg |
+| OI Change | `oi_z` | day-over-day open interest delta |
+| Premium Surge | `prem_z` | dollar premium (price * vol * 100) vs 20d avg |
+| OTM Clustering | `otm_z` | % of chain volume in OTM strikes |
+| Time-to-Expiry | `tte_z` | days to expiration (lower = higher signal) |
+| Bid-Ask Spread | `spread_z` | tighter spread on high volume = informed |
+| Underlying Move | `underlying_z` | correlated stock price movement |
+| Sweep Detection | `sweep_z` | simultaneous multi-exchange fills at ask |
+
+## Already Priced In Gate
+
+Because all data is 15 minutes delayed, the underlying may have already moved by the time we detect an anomaly. Before alerting, check whether the underlying stock has moved >2% in the direction of the options bet (calls → stock up, puts → stock down). If so, suppress the alert entirely — the opportunity is gone. This is a binary gate, not a weighted factor.
+
+## Composite Score
+
+Weighted sum of factor z-scores, normalized to 0–10 scale. Weights are configurable but start with research-informed defaults. Alert fires when `composite_score >= ANOMALY_ALERT_MIN_SCORE` AND the already-priced-in gate has not suppressed it.
+
+## Deduplication
+
+Do not re-alert on the same contract within the same trading day unless the composite score has increased by 1.0+ since the last alert for that contract.
+
+## Output Contract
+
+```python
+@dataclass
+class ScoreBreakdown:
+    ticker: str
+    contract: str
+    composite_score: float
+    factors: dict[str, FactorScore]  # key -> {raw, z_score, weight, contribution}
+    underlying_move_pct: float       # stock move since activity detected
+    already_priced_in: bool          # True = suppress alert
+    timestamp: datetime
+    triggered: bool                  # score >= threshold AND not priced in
+```
