@@ -132,6 +132,36 @@ class AlertSent(Base, TimestampMixin):
     subject: Mapped[str | None] = mapped_column(Text)
 
 
+class TriggerCandidate(Base, TimestampMixin):
+    """Intra-day trigger persistence tracker.
+
+    Tracks contracts that have triggered across consecutive scan cycles
+    within a single trading day.  A candidate is only promoted to a real
+    alert once it has triggered in >= TRIGGER_CONFIRM_SCANS consecutive
+    scans, filtering out ephemeral volume spikes that disappear between
+    the 15-minute delayed snapshots.
+    """
+
+    __tablename__ = "trigger_candidates"
+    __table_args__ = (
+        Index("ix_trigger_candidates_ticker_date", "option_ticker", "alert_date", unique=True),
+        Index("ix_trigger_candidates_underlying", "underlying_ticker", "alert_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    option_ticker: Mapped[str] = mapped_column(String(30), nullable=False)
+    underlying_ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    alert_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    first_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trigger_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    peak_score: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)
+    peak_factors: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class BacktestRun(Base, TimestampMixin):
     """Metadata and results for a single backtest run."""
 

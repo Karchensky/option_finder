@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     smtp_port: int = Field(default=465)
 
     # Anomaly detection
-    anomaly_alert_min_score: float = Field(default=7.5, description="Composite score threshold for alerts")
+    anomaly_alert_min_score: float = Field(default=6.0, description="Composite score threshold for alerts")
     anomaly_email_enabled: bool = Field(default=False, description="Kill-switch for email delivery")
 
     @property

@@ -3,17 +3,17 @@
 import logging
 from datetime import date, datetime
 
-from src.config.constants import COMPOSITE_SCORE_MAX
+from src.config.constants import BASELINE_LOOKBACK_DAYS, COMPOSITE_SCORE_MAX
 from src.config.settings import get_settings
 from src.database.models import OptionsSnapshot
 from src.scoring.factors import (
+    compute_chain_volume,
     compute_delta_concentration,
     compute_earnings_proximity,
     compute_iv_spike,
     compute_oi_change,
     compute_premium_surge,
     compute_spread,
-    compute_sweep_detection,
     compute_time_to_expiry,
     compute_underlying_move,
     compute_vol_oi_ratio,
@@ -33,6 +33,7 @@ def score_contract(
     underlying_change_pct: float,
     snap_date: date,
     days_to_earnings: int | None = None,
+    chain_volume_history: list[float] | None = None,
 ) -> ScoreBreakdown:
     """Compute the full composite score for a single option contract.
 
@@ -57,35 +58,34 @@ def score_contract(
     try:
         factors["vol_z"] = compute_volume_spike(current_volume, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["vol_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.18, contribution=0.0)
+        factors["vol_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.17, contribution=0.0)
 
     try:
         factors["prem_z"] = compute_premium_surge(current_close, current_volume, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["prem_z"] = FactorScore(raw=current_close * current_volume * 100, z_score=0.0, weight=0.13, contribution=0.0)
+        factors["prem_z"] = FactorScore(raw=current_close * current_volume * 100, z_score=0.0, weight=0.12, contribution=0.0)
 
     try:
         factors["iv_z"] = compute_iv_spike(current_iv, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["iv_z"] = FactorScore(raw=current_iv, z_score=0.0, weight=0.13, contribution=0.0)
+        factors["iv_z"] = FactorScore(raw=current_iv, z_score=0.0, weight=0.14, contribution=0.0)
 
     try:
         factors["vol_oi_z"] = compute_vol_oi_ratio(current_volume, current_oi, baseline_snapshots, ticker=contract)
     except Exception:
         factors["vol_oi_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.12, contribution=0.0)
 
-    try:
-        factors["sweep_z"] = compute_sweep_detection(current_volume, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["sweep_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.10, contribution=0.0)
-
     # --- Tier 2: structural positioning ---
+    factors["chain_vol_z"] = compute_chain_volume(
+        chain_snapshots, chain_volume_history or [], ticker=ticker,
+    )
+
     factors["delta_conc_z"] = compute_delta_concentration(chain_snapshots, underlying_price)
 
     try:
         factors["oi_z"] = compute_oi_change(current_oi, baseline_snapshots, ticker=contract)
     except Exception:
-        factors["oi_z"] = FactorScore(raw=float(current_oi), z_score=0.0, weight=0.07, contribution=0.0)
+        factors["oi_z"] = FactorScore(raw=float(current_oi), z_score=0.0, weight=0.08, contribution=0.0)
 
     factors["earnings_z"] = compute_earnings_proximity(days_to_earnings)
 
@@ -100,8 +100,15 @@ def score_contract(
 
     factors["underlying_z"] = compute_underlying_move(underlying_change_pct, contract_type)
 
-    # Weighted sum -> normalise to 0-10
+    # Weighted sum -> dampen by baseline confidence -> normalise to 0-10
     raw_composite = sum(f.contribution for f in factors.values())
+
+    # Thin baselines produce unreliable z-scores.  Dampen the composite
+    # proportionally: 5 data points → 0.625× multiplier, 20 → 1.0×.
+    baseline_n = len(baseline_snapshots)
+    confidence = min(1.0, 0.5 + 0.5 * baseline_n / BASELINE_LOOKBACK_DAYS)
+    raw_composite *= confidence
+
     normalized = min(COMPOSITE_SCORE_MAX, max(0.0, raw_composite * 2.0))
 
     priced_in = check_already_priced_in(contract_type, underlying_change_pct)
@@ -125,14 +132,15 @@ def score_contract(
         strike_price=float(current.strike_price),
     )
 
-    logger.info(
-        "scored %s | composite=%.2f triggered=%s priced_in=%s earnings=%s",
-        contract,
-        normalized,
-        triggered,
-        priced_in,
-        days_to_earnings,
-        extra={"ticker": ticker, "contract": contract, "score": normalized},
-    )
+    if triggered:
+        logger.info(
+            "TRIGGERED %s | composite=%.2f priced_in=%s earnings=%s",
+            contract, normalized, priced_in, days_to_earnings,
+        )
+    else:
+        logger.debug(
+            "scored %s | composite=%.2f triggered=%s priced_in=%s",
+            contract, normalized, triggered, priced_in,
+        )
 
     return breakdown

@@ -27,21 +27,25 @@ class ScoringRepo:
         )
         await self._session.execute(stmt)
 
+    _BATCH_SIZE = 3000
+
     async def save_many(self, rows: list[dict]) -> None:
-        """Bulk upsert scoring results."""
+        """Bulk upsert scoring results (batched to avoid exceeding asyncpg's 32k parameter limit)."""
         if not rows:
             return
-        stmt = pg_insert(ScoringResult).values(rows)
-        update_cols = {
-            c.name: c
-            for c in stmt.excluded
-            if c.name not in ("id", "option_ticker", "snap_date", "created_at")
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["option_ticker", "snap_date"],
-            set_=update_cols,
-        )
-        await self._session.execute(stmt)
+        for i in range(0, len(rows), self._BATCH_SIZE):
+            chunk = rows[i : i + self._BATCH_SIZE]
+            stmt = pg_insert(ScoringResult).values(chunk)
+            update_cols = {
+                c.name: c
+                for c in stmt.excluded
+                if c.name not in ("id", "option_ticker", "snap_date", "created_at")
+            }
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["option_ticker", "snap_date"],
+                set_=update_cols,
+            )
+            await self._session.execute(stmt)
         await self._session.flush()
 
     async def get_triggered(self, snap_date: date) -> list[ScoringResult]:

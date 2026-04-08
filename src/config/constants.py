@@ -22,6 +22,7 @@ BASELINE_LOOKBACK_DAYS: int = 20
 BASELINE_MIN_DATAPOINTS: int = 5
 STD_FLOOR: float = 0.01
 COMPOSITE_SCORE_MAX: float = 10.0
+Z_SCORE_CAP: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -32,22 +33,27 @@ class FactorWeight:
 
 FACTOR_WEIGHTS: tuple[FactorWeight, ...] = (
     # Tier 1 -- primary volume/flow signals
-    FactorWeight("vol_z", 0.18),
-    FactorWeight("prem_z", 0.13),
-    FactorWeight("iv_z", 0.13),
+    FactorWeight("vol_z", 0.17),
+    FactorWeight("prem_z", 0.12),
+    FactorWeight("iv_z", 0.14),     # boosted: independent signal about market expectations
     FactorWeight("vol_oi_z", 0.12),
-    FactorWeight("sweep_z", 0.10),
     # Tier 2 -- structural positioning
+    FactorWeight("chain_vol_z", 0.09),  # chain-level volume context (dampens isolated spikes)
     FactorWeight("delta_conc_z", 0.08),
-    FactorWeight("oi_z", 0.07),       # lagging indicator (prior-day settlement)
-    FactorWeight("earnings_z", 0.07),  # negative z-score near earnings = dampener
+    FactorWeight("oi_z", 0.08),         # lagging indicator (prior-day settlement)
+    FactorWeight("earnings_z", 0.07),   # negative z-score near earnings = dampener
     FactorWeight("tte_z", 0.06),
     # Tier 3 -- supporting context
     FactorWeight("spread_z", 0.04),
-    FactorWeight("underlying_z", 0.02),
+    FactorWeight("underlying_z", 0.03),
 )
 
 FACTOR_WEIGHT_MAP: dict[str, float] = {fw.key: fw.weight for fw in FACTOR_WEIGHTS}
+
+# ---------------------------------------------------------------------------
+# Minimum premium gate -- filter out trivially small positions
+# ---------------------------------------------------------------------------
+MIN_PREMIUM_THRESHOLD: float = 10_000  # $10K in total dollar premium (price * volume * 100)
 
 # ---------------------------------------------------------------------------
 # Already-priced-in gate
@@ -65,6 +71,11 @@ DEDUP_SCORE_DELTA: float = 1.0
 POLYGON_BASE_URL: str = "https://api.polygon.io"
 POLYGON_PAGE_LIMIT: int = 250
 POLYGON_PAGE_DELAY_S: float = 0.1  # 100 ms between paginated requests
+
+# ---------------------------------------------------------------------------
+# Trigger persistence -- require anomaly across consecutive scans
+# ---------------------------------------------------------------------------
+TRIGGER_CONFIRM_SCANS: int = 2  # must trigger in N consecutive scans before alerting
 
 # ---------------------------------------------------------------------------
 # Pipeline resilience

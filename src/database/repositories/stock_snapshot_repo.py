@@ -27,17 +27,21 @@ class StockSnapshotRepo:
         )
         await self._session.execute(stmt)
 
+    _BATCH_SIZE = 2000
+
     async def upsert_many(self, rows: list[dict]) -> None:
-        """Bulk upsert a list of stock snapshot dicts."""
+        """Bulk upsert a list of stock snapshot dicts (batched to avoid exceeding asyncpg's 32k parameter limit)."""
         if not rows:
             return
-        stmt = pg_insert(StockSnapshot).values(rows)
-        update_cols = {c.name: c for c in stmt.excluded if c.name not in ("id", "ticker", "snap_date", "created_at")}
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["ticker", "snap_date"],
-            set_=update_cols,
-        )
-        await self._session.execute(stmt)
+        for i in range(0, len(rows), self._BATCH_SIZE):
+            chunk = rows[i : i + self._BATCH_SIZE]
+            stmt = pg_insert(StockSnapshot).values(chunk)
+            update_cols = {c.name: c for c in stmt.excluded if c.name not in ("id", "ticker", "snap_date", "created_at")}
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker", "snap_date"],
+                set_=update_cols,
+            )
+            await self._session.execute(stmt)
         await self._session.flush()
 
     async def get_by_ticker_date(self, ticker: str, snap_date: date) -> StockSnapshot | None:

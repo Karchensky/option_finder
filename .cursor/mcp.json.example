@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "polygon": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "envmcp",
+        "-e",
+        ".env",
+        "uvx",
+        "--from",
+        "git+https://github.com/massive-com/mcp_massive@v0.8.8",
+        "mcp_massive"
+      ]
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "envmcp",
+        "-e",
+        ".env",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-postgres"
+      ]
+    }
+  }
+}

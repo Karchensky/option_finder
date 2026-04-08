@@ -3,7 +3,7 @@
 import logging
 from datetime import date
 
-from src.config.constants import FACTOR_WEIGHT_MAP, STD_FLOOR
+from src.config.constants import FACTOR_WEIGHT_MAP, STD_FLOOR, Z_SCORE_CAP
 from src.database.models import OptionsSnapshot
 from src.scoring.baseline import (
     BaselineStats,
@@ -21,8 +21,14 @@ from src.scoring.models import FactorScore
 logger = logging.getLogger(__name__)
 
 
+def _clamp_z(z: float) -> float:
+    """Clamp z-score to [-Z_SCORE_CAP, Z_SCORE_CAP] to prevent single-factor blowout."""
+    return max(-Z_SCORE_CAP, min(Z_SCORE_CAP, z))
+
+
 def _make_factor(key: str, raw: float, z: float) -> FactorScore:
     w = FACTOR_WEIGHT_MAP.get(key, 0.0)
+    z = _clamp_z(z)
     return FactorScore(raw=raw, z_score=z, weight=w, contribution=z * w)
 
 
@@ -95,7 +101,9 @@ def compute_vol_oi_ratio(
 
     ratios = extract_vol_oi_ratios(baseline_snapshots)
     if len(ratios) < 5:
-        z = max(0.0, (raw_ratio - 0.3) / 0.2) if raw_ratio > 0.3 else 0.0
+        # Conservative fallback: ratio < 1.0 is unremarkable; scale gently above 1.0.
+        # A ratio of 1.5 → z≈1.3, ratio of 3.0 → z≈3.3, ratio of 4.25 → z=5.0 (cap).
+        z = max(0.0, (raw_ratio - 0.5) / 0.75) if raw_ratio > 0.5 else 0.0
         return _make_factor("vol_oi_z", raw_ratio, z)
 
     bl = compute_baseline(ratios, ticker=ticker)
@@ -189,6 +197,29 @@ def compute_delta_concentration(
     otm_frac = deep_otm_vol / total_vol
     z = (otm_frac - 0.15) / max(0.10, STD_FLOOR)
     return _make_factor("delta_conc_z", otm_frac, z)
+
+
+def compute_chain_volume(
+    chain_snapshots: list[OptionsSnapshot],
+    chain_volume_history: list[float],
+    ticker: str = "",
+) -> FactorScore:
+    """Total chain volume vs 20-day baseline for the same underlying.
+
+    Contextualises per-contract anomalies: if the entire chain is quiet
+    (z < ~1), a single contract spike is more likely noise.  When the
+    whole chain is active, individual spikes carry more conviction.
+    """
+    from src.config.constants import BASELINE_MIN_DATAPOINTS
+
+    current_total = sum(s.volume or 0 for s in chain_snapshots)
+
+    if not chain_volume_history or len(chain_volume_history) < BASELINE_MIN_DATAPOINTS:
+        return _make_factor("chain_vol_z", float(current_total), 0.0)
+
+    bl = compute_baseline(chain_volume_history, ticker=ticker)
+    z = z_score(float(current_total), bl)
+    return _make_factor("chain_vol_z", float(current_total), z)
 
 
 def compute_time_to_expiry(

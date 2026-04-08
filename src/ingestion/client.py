@@ -22,7 +22,8 @@ def get_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             base_url=POLYGON_BASE_URL,
             params={"apiKey": settings.polygon_api_key},
-            timeout=httpx.Timeout(30.0),
+            timeout=httpx.Timeout(60.0),
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
         )
     return _client
 

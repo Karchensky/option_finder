@@ -24,7 +24,7 @@ async def fetch_option_chain(underlying: str) -> list[OptionSnapshotResult]:
         except Exception:
             ticker_hint = r.get("details", {}).get("ticker", "?") if isinstance(r, dict) else "?"
             logger.debug("skipping invalid option result for %s: %s", underlying, ticker_hint)
-    logger.info("fetched %d option contracts for %s", len(snapshots), underlying)
+    logger.debug("fetched %d option contracts for %s", len(snapshots), underlying)
     return snapshots
 
 
@@ -98,5 +98,5 @@ async def ingest_option_chain(
     await repo.upsert_many(rows)
     await session.commit()
 
-    logger.info("upserted %d option rows for %s on %s", len(rows), underlying, snap_date)
+    logger.debug("upserted %d option rows for %s on %s", len(rows), underlying, snap_date)
     return snapshots

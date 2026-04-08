@@ -1,8 +1,11 @@
-"""Alert Feed — live and recent alerts with score breakdowns."""
+"""Alert Feed — live and recent alerts with score breakdowns and factor detail."""
 
-import streamlit as st
+import json
+
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 from datetime import date, timedelta
 from sqlalchemy import text
 
@@ -60,7 +63,11 @@ def load_scoring_results(date_from: date, date_to: date, min_score: float) -> pd
                 o.expiration_date,
                 o.volume,
                 o.open_interest,
-                o.implied_volatility
+                o.implied_volatility,
+                o.bid,
+                o.ask,
+                o.close AS option_price,
+                o.underlying_price
             FROM scoring_results s
             LEFT JOIN options_snapshots o
                 ON o.option_ticker = s.option_ticker AND o.snap_date = s.snap_date
@@ -97,6 +104,77 @@ def load_daily_stats(days: int = 30) -> pd.DataFrame:
         return pd.DataFrame(rows, columns=result.keys())
 
 
+def load_trigger_candidates(alert_date: date) -> pd.DataFrame:
+    with get_db() as db:
+        query = text("""
+            SELECT
+                tc.option_ticker,
+                tc.underlying_ticker,
+                tc.trigger_count,
+                tc.peak_score,
+                tc.confirmed,
+                tc.expired,
+                tc.first_triggered_at,
+                tc.last_triggered_at,
+                tc.peak_factors
+            FROM trigger_candidates tc
+            WHERE tc.alert_date = :alert_date
+            ORDER BY tc.peak_score DESC
+        """)
+        result = db.execute(query, {"alert_date": alert_date})
+        rows = result.fetchall()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows, columns=result.keys())
+
+
+def _parse_factors(factors_raw) -> dict:
+    """Safely parse a factors column value (JSONB or string)."""
+    if isinstance(factors_raw, dict):
+        return factors_raw
+    if isinstance(factors_raw, str):
+        try:
+            return json.loads(factors_raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _render_factor_chart(factors: dict, title: str = "Factor Contributions") -> go.Figure:
+    """Horizontal bar chart showing each factor's weighted contribution."""
+    if not factors:
+        return None
+
+    names = []
+    contributions = []
+    z_scores = []
+
+    for key in sorted(factors.keys(), key=lambda k: abs(factors[k].get("contribution", 0)), reverse=True):
+        f = factors[key]
+        names.append(key.replace("_z", "").replace("_", " ").title())
+        contributions.append(f.get("contribution", 0))
+        z_scores.append(f.get("z_score", 0))
+
+    colors = ["#2ecc71" if c > 0 else "#e74c3c" for c in contributions]
+
+    fig = go.Figure(go.Bar(
+        x=contributions,
+        y=names,
+        orientation="h",
+        marker_color=colors,
+        text=[f"z={z:+.1f}" for z in z_scores],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Weighted Contribution",
+        yaxis=dict(autorange="reversed"),
+        height=max(200, len(names) * 32),
+        margin=dict(l=120, r=40, t=40, b=30),
+    )
+    return fig
+
+
 # --- Sidebar ---
 st.sidebar.header("Filters")
 
@@ -122,7 +200,6 @@ st.title("Alert Feed")
 daily_stats = load_daily_stats(30)
 if not daily_stats.empty:
     col1, col2, col3, col4 = st.columns(4)
-    today_stats = daily_stats[daily_stats["snap_date"] == date.today()]
     total_triggered = int(daily_stats["triggered"].sum())
     col1.metric("Alerts Triggered (30d)", total_triggered)
     col2.metric("Contracts Scored (30d)", f"{int(daily_stats['contracts_scored'].sum()):,}")
@@ -140,7 +217,45 @@ if not daily_stats.empty:
     fig.update_layout(height=300, margin=dict(t=40, b=20))
     st.plotly_chart(fig, use_container_width=True)
 
-# Alerts table
+# --- Trigger Candidates (persistence view) ---
+st.subheader("Trigger Candidates (Today)")
+st.caption("Contracts must trigger across multiple consecutive scans before an alert fires.")
+candidates_df = load_trigger_candidates(date.today())
+if candidates_df.empty:
+    st.info("No trigger candidates today — the scanner may not have run yet.")
+else:
+    confirmed = candidates_df[candidates_df["confirmed"] == True]  # noqa: E712
+    pending = candidates_df[(candidates_df["confirmed"] == False) & (candidates_df["expired"] == False)]  # noqa: E712
+    expired = candidates_df[candidates_df["expired"] == True]  # noqa: E712
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Confirmed", len(confirmed))
+    c2.metric("Pending", len(pending))
+    c3.metric("Expired", len(expired))
+
+    if not confirmed.empty:
+        st.markdown("**Confirmed triggers:**")
+        st.dataframe(
+            confirmed[["underlying_ticker", "option_ticker", "peak_score", "trigger_count",
+                        "first_triggered_at", "last_triggered_at"]],
+            use_container_width=True,
+            column_config={
+                "peak_score": st.column_config.NumberColumn("Peak Score", format="%.2f"),
+            },
+        )
+
+    if not pending.empty:
+        st.markdown("**Pending confirmation:**")
+        st.dataframe(
+            pending[["underlying_ticker", "option_ticker", "peak_score", "trigger_count",
+                      "first_triggered_at"]],
+            use_container_width=True,
+            column_config={
+                "peak_score": st.column_config.NumberColumn("Peak Score", format="%.2f"),
+            },
+        )
+
+# --- Sent Alerts table ---
 st.subheader("Sent Alerts")
 if status_filter:
     alerts_df = load_alerts(date_from, date_to, min_score, status_filter)
@@ -158,7 +273,7 @@ if status_filter:
 else:
     st.warning("Select at least one alert status to view.")
 
-# Top scoring contracts
+# --- Top Scoring Contracts with Factor Breakdown ---
 st.subheader("Top Scoring Contracts")
 scoring_df = load_scoring_results(date_from, date_to, min_score)
 if scoring_df.empty:
@@ -167,7 +282,8 @@ else:
     display_cols = [
         "snap_date", "underlying_ticker", "option_ticker", "composite_score",
         "contract_type", "strike_price", "expiration_date", "volume",
-        "open_interest", "implied_volatility", "triggered", "already_priced_in",
+        "open_interest", "implied_volatility", "option_price", "underlying_price",
+        "triggered", "already_priced_in",
     ]
     existing_cols = [c for c in display_cols if c in scoring_df.columns]
     st.dataframe(
@@ -177,5 +293,55 @@ else:
             "composite_score": st.column_config.NumberColumn("Score", format="%.2f"),
             "strike_price": st.column_config.NumberColumn("Strike", format="$%.2f"),
             "implied_volatility": st.column_config.NumberColumn("IV", format="%.4f"),
+            "option_price": st.column_config.NumberColumn("Opt Price", format="$%.2f"),
+            "underlying_price": st.column_config.NumberColumn("Undl Price", format="$%.2f"),
         },
     )
+
+    # Factor drill-down for each triggered contract
+    triggered_rows = scoring_df[scoring_df["triggered"] == True]  # noqa: E712
+    if not triggered_rows.empty:
+        st.subheader("Factor Breakdown — Triggered Contracts")
+        for idx, row in triggered_rows.head(20).iterrows():
+            factors = _parse_factors(row.get("factors"))
+            if not factors:
+                continue
+
+            label = f"{row['underlying_ticker']}  |  {row['option_ticker']}  |  Score: {row['composite_score']:.2f}"
+            with st.expander(label, expanded=False):
+                col_left, col_right = st.columns([3, 2])
+
+                with col_left:
+                    fig = _render_factor_chart(factors, title=f"Factor Contributions — {row['option_ticker']}")
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+
+                with col_right:
+                    st.markdown("**Contract Details**")
+                    details = {
+                        "Type": row.get("contract_type", "").upper(),
+                        "Strike": f"${float(row.get('strike_price', 0)):,.2f}",
+                        "Expiration": str(row.get("expiration_date", "")),
+                        "Volume": f"{int(row.get('volume', 0)):,}",
+                        "Open Interest": f"{int(row.get('open_interest', 0)):,}",
+                        "IV": f"{float(row.get('implied_volatility', 0)):.4f}",
+                        "Option Price": f"${float(row.get('option_price', 0)):,.2f}",
+                        "Underlying": f"${float(row.get('underlying_price', 0)):,.2f}",
+                        "Undl Move": f"{float(row.get('underlying_move_pct', 0)):+.2f}%",
+                        "Priced In": "Yes" if row.get("already_priced_in") else "No",
+                    }
+                    for k, v in details.items():
+                        st.text(f"{k:>16s}: {v}")
+
+                    st.markdown("**Factor Scores**")
+                    factor_table = []
+                    for key in sorted(factors.keys(), key=lambda k: abs(factors[k].get("contribution", 0)), reverse=True):
+                        f = factors[key]
+                        factor_table.append({
+                            "Factor": key,
+                            "Raw": f"{f.get('raw', 0):,.2f}",
+                            "Z-Score": f"{f.get('z_score', 0):+.2f}",
+                            "Weight": f"{f.get('weight', 0):.2f}",
+                            "Contribution": f"{f.get('contribution', 0):+.4f}",
+                        })
+                    st.dataframe(pd.DataFrame(factor_table), use_container_width=True, hide_index=True)
