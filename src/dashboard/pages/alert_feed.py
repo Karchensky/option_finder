@@ -128,6 +128,16 @@ def load_trigger_candidates(alert_date: date) -> pd.DataFrame:
         return pd.DataFrame(rows, columns=result.keys())
 
 
+def _safe_float(val: object, default: float = 0.0) -> float:
+    """Convert a possibly-None value to float, returning *default* when None."""
+    return float(val) if val is not None else default
+
+
+def _safe_int(val: object, default: int = 0) -> int:
+    """Convert a possibly-None value to int, returning *default* when None."""
+    return int(val) if val is not None else default
+
+
 def _parse_factors(factors_raw) -> dict:
     """Safely parse a factors column value (JSONB or string)."""
     if isinstance(factors_raw, dict):
@@ -319,15 +329,15 @@ else:
                 with col_right:
                     st.markdown("**Contract Details**")
                     details = {
-                        "Type": row.get("contract_type", "").upper(),
-                        "Strike": f"${float(row.get('strike_price', 0)):,.2f}",
-                        "Expiration": str(row.get("expiration_date", "")),
-                        "Volume": f"{int(row.get('volume', 0)):,}",
-                        "Open Interest": f"{int(row.get('open_interest', 0)):,}",
-                        "IV": f"{float(row.get('implied_volatility', 0)):.4f}",
-                        "Option Price": f"${float(row.get('option_price', 0)):,.2f}",
-                        "Underlying": f"${float(row.get('underlying_price', 0)):,.2f}",
-                        "Undl Move": f"{float(row.get('underlying_move_pct', 0)):+.2f}%",
+                        "Type": (row.get("contract_type") or "").upper(),
+                        "Strike": f"${_safe_float(row.get('strike_price')):,.2f}",
+                        "Expiration": str(row.get("expiration_date") or ""),
+                        "Volume": f"{_safe_int(row.get('volume')):,}",
+                        "Open Interest": f"{_safe_int(row.get('open_interest')):,}",
+                        "IV": f"{_safe_float(row.get('implied_volatility')):.4f}",
+                        "Option Price": f"${_safe_float(row.get('option_price')):,.2f}",
+                        "Underlying": f"${_safe_float(row.get('underlying_price')):,.2f}",
+                        "Undl Move": f"{_safe_float(row.get('underlying_move_pct')):+.2f}%",
                         "Priced In": "Yes" if row.get("already_priced_in") else "No",
                     }
                     for k, v in details.items():

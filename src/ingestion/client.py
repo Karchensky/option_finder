@@ -11,6 +11,10 @@ from src.exceptions import PolygonAPIError
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+RETRY_BASE_DELAY_S = 1.0
+
 _client: httpx.AsyncClient | None = None
 
 
@@ -39,24 +43,51 @@ async def close_client() -> None:
 async def polygon_get(path: str, params: dict | None = None) -> dict:
     """Issue a GET request against the Polygon API and return the JSON body.
 
-    Raises PolygonAPIError on non-2xx responses.
+    Retries transient failures (429, 5xx) with exponential backoff.
+    Raises PolygonAPIError on persistent non-2xx responses.
     """
     client = get_client()
-    try:
-        resp = await client.get(path, params=params)
-        resp.raise_for_status()
-        return resp.json()
-    except httpx.HTTPStatusError as exc:
-        raise PolygonAPIError(
-            message=f"Polygon API {exc.response.status_code}: {exc.response.text[:300]}",
-            status_code=exc.response.status_code,
-            endpoint=path,
-        ) from exc
-    except httpx.RequestError as exc:
-        raise PolygonAPIError(
-            message=f"Polygon request failed: {exc}",
-            endpoint=path,
-        ) from exc
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = await client.get(path, params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                logger.warning(
+                    "transient %d on %s — retry %d/%d in %.1fs",
+                    exc.response.status_code, path, attempt + 1, MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
+                last_exc = exc
+                continue
+            raise PolygonAPIError(
+                message=f"Polygon API {exc.response.status_code}: {exc.response.text[:300]}",
+                status_code=exc.response.status_code,
+                endpoint=path,
+            ) from exc
+        except httpx.RequestError as exc:
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                logger.warning(
+                    "request error on %s — retry %d/%d in %.1fs: %s",
+                    path, attempt + 1, MAX_RETRIES, delay, exc,
+                )
+                await asyncio.sleep(delay)
+                last_exc = exc
+                continue
+            raise PolygonAPIError(
+                message=f"Polygon request failed: {exc}",
+                endpoint=path,
+            ) from exc
+
+    raise PolygonAPIError(
+        message=f"Polygon request failed after {MAX_RETRIES} retries: {last_exc}",
+        endpoint=path,
+    )
 
 
 async def fetch_all_pages(path: str, *, limit: int = POLYGON_PAGE_LIMIT) -> list[dict]:
@@ -73,20 +104,48 @@ async def fetch_all_pages(path: str, *, limit: int = POLYGON_PAGE_LIMIT) -> list
     params: dict[str, str] = {"limit": str(limit)}
 
     while True:
-        try:
-            resp = await client.get(path, params=params)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
+        last_exc: Exception | None = None
+        resp: httpx.Response | None = None
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = await client.get(path, params=params)
+                resp.raise_for_status()
+                break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                    logger.warning(
+                        "transient %d paginating %s — retry %d/%d in %.1fs",
+                        exc.response.status_code, path, attempt + 1, MAX_RETRIES, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = exc
+                    continue
+                raise PolygonAPIError(
+                    message=f"Pagination error {exc.response.status_code}: {exc.response.text[:300]}",
+                    status_code=exc.response.status_code,
+                    endpoint=path,
+                ) from exc
+            except httpx.RequestError as exc:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                    logger.warning(
+                        "request error paginating %s — retry %d/%d in %.1fs: %s",
+                        path, attempt + 1, MAX_RETRIES, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = exc
+                    continue
+                raise PolygonAPIError(
+                    message=f"Pagination request failed: {exc}",
+                    endpoint=path,
+                ) from exc
+        else:
             raise PolygonAPIError(
-                message=f"Pagination error {exc.response.status_code}: {exc.response.text[:300]}",
-                status_code=exc.response.status_code,
+                message=f"Pagination failed after {MAX_RETRIES} retries: {last_exc}",
                 endpoint=path,
-            ) from exc
-        except httpx.RequestError as exc:
-            raise PolygonAPIError(
-                message=f"Pagination request failed: {exc}",
-                endpoint=path,
-            ) from exc
+            )
 
         data = resp.json()
         page_results = data.get("results") or []
