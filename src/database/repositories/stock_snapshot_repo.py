@@ -1,15 +1,13 @@
 """Repository for stock snapshot CRUD operations."""
 
-import logging
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import StockSnapshot
-
-logger = logging.getLogger(__name__)
 
 
 class StockSnapshotRepo:
@@ -53,7 +51,7 @@ class StockSnapshotRepo:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_movers(self, snap_date: date, min_change_pct: float = 2.0) -> list[StockSnapshot]:
+    async def get_movers(self, snap_date: date, min_change_pct: float | Decimal = 2.0) -> list[StockSnapshot]:
         """Return stocks that moved more than *min_change_pct* on *snap_date*."""
         stmt = (
             select(StockSnapshot)

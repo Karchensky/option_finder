@@ -111,25 +111,6 @@ def compute_vol_oi_ratio(
     return _make_factor("vol_oi_z", raw_ratio, z)
 
 
-def compute_sweep_detection(
-    current_volume: int,
-    baseline_snapshots: list[OptionsSnapshot],
-    ticker: str = "",
-) -> FactorScore:
-    """Placeholder sweep detection based on volume extremity.
-
-    True sweep detection requires trade-level condition codes and
-    multi-exchange fill clustering. For the initial build we use
-    volume as a proxy -- a very high volume z-score implies aggressive
-    buying consistent with sweep-like behaviour.
-    """
-    volumes = extract_volumes(baseline_snapshots)
-    bl = compute_baseline(volumes, ticker=ticker)
-    z = z_score(float(current_volume), bl)
-    sweep_z = max(z - 2.0, 0.0)
-    return _make_factor("sweep_z", float(current_volume), sweep_z)
-
-
 # ---------------------------------------------------------------------------
 # Tier 2 -- Medium signal
 # ---------------------------------------------------------------------------

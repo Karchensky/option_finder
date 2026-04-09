@@ -1,8 +1,10 @@
 """Async SQLAlchemy engine and session factory."""
 
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -10,11 +12,13 @@ from sqlalchemy.ext.asyncio import (
 
 from src.config.settings import get_settings
 
-_engine = None
+logger = logging.getLogger(__name__)
+
+_engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine():
+def get_engine() -> AsyncEngine:
     """Return the global async engine (created on first call)."""
     global _engine  # noqa: PLW0603
     if _engine is None:
@@ -25,6 +29,7 @@ def get_engine():
             pool_size=10,
             max_overflow=20,
         )
+        logger.info("async engine created (pool_size=10, max_overflow=20)")
     return _engine
 
 

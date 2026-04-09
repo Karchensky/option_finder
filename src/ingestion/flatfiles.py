@@ -12,7 +12,8 @@ from src.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-def _get_s3_client():
+def _get_s3_client() -> "boto3.client":
+    """Return a configured S3 client for Polygon flat files."""
     settings = get_settings()
     return boto3.client(
         "s3",
@@ -47,8 +48,8 @@ def download_day_aggs(date_str: str, dest: Path | str) -> Path:
     return csv_path
 
 
-def stream_day_aggs(date_str: str):
-    """Stream a daily options agg CSV from S3 as an in-memory text buffer."""
+def stream_day_aggs(date_str: str) -> io.StringIO:
+    """Load a daily options agg CSV from S3 into an in-memory text buffer."""
     settings = get_settings()
     year, month, _ = date_str.split("-")
     key = f"{settings.polygon_flatfiles_prefix}/{year}/{month}/{date_str}.csv.gz"

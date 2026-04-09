@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import sys
+import types
 
 from src.config.constants import (
     CYCLE_RETRY_DELAY_S,
@@ -21,7 +22,7 @@ _shutdown_requested = False
 MARKET_CLOSED_SLEEP_S = 300  # 5 min between checks when market is closed
 
 
-def _request_shutdown(signum, frame) -> None:
+def _request_shutdown(signum: int, frame: types.FrameType | None) -> None:
     global _shutdown_requested  # noqa: PLW0603
     logger.info("shutdown requested (signal %s) — finishing current cycle", signum)
     _shutdown_requested = True
@@ -45,7 +46,8 @@ async def startup_checks() -> None:
 async def run_loop() -> None:
     """Main loop: run scan cycles, let the pipeline decide if market is open."""
     signal.signal(signal.SIGINT, _request_shutdown)
-    signal.signal(signal.SIGTERM, _request_shutdown)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _request_shutdown)
 
     logger.info("Option Finder scan loop starting")
     await startup_checks()

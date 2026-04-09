@@ -82,6 +82,11 @@ async def fetch_all_pages(path: str, *, limit: int = POLYGON_PAGE_LIMIT) -> list
                 status_code=exc.response.status_code,
                 endpoint=path,
             ) from exc
+        except httpx.RequestError as exc:
+            raise PolygonAPIError(
+                message=f"Pagination request failed: {exc}",
+                endpoint=path,
+            ) from exc
 
         data = resp.json()
         page_results = data.get("results") or []

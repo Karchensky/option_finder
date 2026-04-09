@@ -6,15 +6,17 @@ import re
 import time
 from datetime import date, datetime, timezone
 
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+
 from src.alerts.dedup import log_alert_result, should_send_alert
 from src.alerts.formatter import format_digest_email
 from src.alerts.sender import send_email
-from src.config.constants import MIN_PREMIUM_THRESHOLD, TRIGGER_CONFIRM_SCANS
+from src.config.constants import EASTERN, MIN_PREMIUM_THRESHOLD, TRIGGER_CONFIRM_SCANS
 from src.database.engine import get_session_factory
 from src.database.repositories.options_snapshot_repo import OptionsSnapshotRepo
 from src.database.repositories.scoring_repo import ScoringRepo
 from src.database.repositories.trigger_candidate_repo import TriggerCandidateRepo
-from src.exceptions import AlertError, OptionFinderError
+from src.exceptions import AlertError, OptionFinderError, PolygonAPIError
 from src.ingestion.earnings import days_until_earnings, fetch_next_earnings_date
 from src.ingestion.market_status import is_market_open
 from src.ingestion.news import fetch_ticker_news
@@ -69,7 +71,7 @@ async def _process_underlying(
     snap_date: date,
     u_change: float,
     u_price_fallback: float,
-    factory,
+    factory: async_sessionmaker[AsyncSession],
     semaphore: asyncio.Semaphore,
 ) -> dict:
     """Fetch chain, score contracts, persist results for ONE underlying.
@@ -179,7 +181,7 @@ async def run_scan_cycle() -> dict:
         "errors": 0,
     }
     t0 = time.monotonic()
-    snap_date = date.today()
+    snap_date = datetime.now(EASTERN).date()
     factory = get_session_factory()
 
     # 1. Check market status
@@ -336,8 +338,8 @@ async def run_scan_cycle() -> dict:
                 dte = days_until_earnings(earnings_date, as_of=snap_date)
                 if dte is not None:
                     logger.info("earnings proximity for %s: %+d days", ticker, dte)
-            except Exception:
-                pass
+            except PolygonAPIError:
+                logger.debug("earnings lookup failed for %s", ticker, exc_info=True)
 
     # 7. Send ONE digest email
     if final_triggered:
@@ -347,12 +349,12 @@ async def run_scan_cycle() -> dict:
         )
         try:
             tickers_for_news = sorted({b.ticker for b in final_triggered})
-            news_by_ticker: dict = {}
+            news_by_ticker: dict[str, list] = {}
             for ticker in tickers_for_news[:10]:
                 try:
                     news_by_ticker[ticker] = await fetch_ticker_news(ticker, limit=3)
-                except Exception:
-                    pass
+                except PolygonAPIError:
+                    logger.debug("news fetch failed for %s", ticker, exc_info=True)
 
             msg = format_digest_email(final_triggered, news_by_ticker=news_by_ticker)
             try:

@@ -1,15 +1,11 @@
 """Repository for alert deduplication and logging."""
 
-import logging
 from datetime import date
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import AlertSent
-
-logger = logging.getLogger(__name__)
 
 
 class AlertRepo:

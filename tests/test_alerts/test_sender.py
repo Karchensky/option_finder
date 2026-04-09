@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.alerts.sender import send_email
-from src.exceptions import AlertError
 
 
 def _make_msg() -> MIMEMultipart:

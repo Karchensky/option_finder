@@ -3,9 +3,10 @@
 import logging
 from datetime import date, datetime
 
-from src.config.constants import BASELINE_LOOKBACK_DAYS, COMPOSITE_SCORE_MAX
+from src.config.constants import BASELINE_LOOKBACK_DAYS, COMPOSITE_SCORE_MAX, FACTOR_WEIGHT_MAP
 from src.config.settings import get_settings
 from src.database.models import OptionsSnapshot
+from src.exceptions import InsufficientDataError
 from src.scoring.factors import (
     compute_chain_volume,
     compute_delta_concentration,
@@ -23,6 +24,11 @@ from src.scoring.gate import check_already_priced_in
 from src.scoring.models import FactorScore, ScoreBreakdown
 
 logger = logging.getLogger(__name__)
+
+
+def _zero_factor(key: str, raw: float = 0.0) -> FactorScore:
+    """Return a neutral FactorScore using the canonical weight from FACTOR_WEIGHT_MAP."""
+    return FactorScore(raw=raw, z_score=0.0, weight=FACTOR_WEIGHT_MAP.get(key, 0.0), contribution=0.0)
 
 
 def score_contract(
@@ -57,23 +63,23 @@ def score_contract(
     # --- Tier 1: primary volume/flow signals ---
     try:
         factors["vol_z"] = compute_volume_spike(current_volume, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["vol_z"] = FactorScore(raw=float(current_volume), z_score=0.0, weight=0.17, contribution=0.0)
+    except InsufficientDataError:
+        factors["vol_z"] = _zero_factor("vol_z", raw=float(current_volume))
 
     try:
         factors["prem_z"] = compute_premium_surge(current_close, current_volume, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["prem_z"] = FactorScore(raw=current_close * current_volume * 100, z_score=0.0, weight=0.12, contribution=0.0)
+    except InsufficientDataError:
+        factors["prem_z"] = _zero_factor("prem_z", raw=current_close * current_volume * 100)
 
     try:
         factors["iv_z"] = compute_iv_spike(current_iv, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["iv_z"] = FactorScore(raw=current_iv, z_score=0.0, weight=0.14, contribution=0.0)
+    except InsufficientDataError:
+        factors["iv_z"] = _zero_factor("iv_z", raw=current_iv)
 
     try:
         factors["vol_oi_z"] = compute_vol_oi_ratio(current_volume, current_oi, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["vol_oi_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.12, contribution=0.0)
+    except InsufficientDataError:
+        factors["vol_oi_z"] = _zero_factor("vol_oi_z")
 
     # --- Tier 2: structural positioning ---
     factors["chain_vol_z"] = compute_chain_volume(
@@ -84,8 +90,8 @@ def score_contract(
 
     try:
         factors["oi_z"] = compute_oi_change(current_oi, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["oi_z"] = FactorScore(raw=float(current_oi), z_score=0.0, weight=0.08, contribution=0.0)
+    except InsufficientDataError:
+        factors["oi_z"] = _zero_factor("oi_z", raw=float(current_oi))
 
     factors["earnings_z"] = compute_earnings_proximity(days_to_earnings)
 
@@ -95,8 +101,8 @@ def score_contract(
     # --- Tier 3: supporting context ---
     try:
         factors["spread_z"] = compute_spread(current_bid, current_ask, baseline_snapshots, ticker=contract)
-    except Exception:
-        factors["spread_z"] = FactorScore(raw=0.0, z_score=0.0, weight=0.04, contribution=0.0)
+    except InsufficientDataError:
+        factors["spread_z"] = _zero_factor("spread_z")
 
     factors["underlying_z"] = compute_underlying_move(underlying_change_pct, contract_type)
 

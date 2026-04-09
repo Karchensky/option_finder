@@ -29,6 +29,14 @@ def _factor_rows_text(breakdown: ScoreBreakdown) -> str:
     return "\n".join(lines)
 
 
+def _fmt_price(val: float | None) -> str:
+    return f"${val:,.2f}" if val is not None else "N/A"
+
+
+def _fmt_int(val: int | None) -> str:
+    return f"{val:,}" if val is not None else "N/A"
+
+
 def _single_alert_html(breakdown: ScoreBreakdown) -> str:
     """Build HTML block for one triggered contract inside the digest."""
     direction = "CALL" if breakdown.contract_type.lower() == "call" else "PUT"
@@ -37,11 +45,11 @@ def _single_alert_html(breakdown: ScoreBreakdown) -> str:
       <h3 style="color:#d32f2f;margin-top:0;">{breakdown.ticker} — {direction} — Score {breakdown.composite_score:.2f}/10</h3>
       <table style="border-collapse:collapse;margin-bottom:8px;">
         <tr><td><b>Contract</b></td><td>{breakdown.contract}</td></tr>
-        <tr><td><b>Strike</b></td><td>${breakdown.strike_price:,.2f} {direction} exp {breakdown.expiration_date}</td></tr>
-        <tr><td><b>Option Price</b></td><td>${breakdown.option_price:,.2f}</td></tr>
-        <tr><td><b>Volume</b></td><td>{breakdown.option_volume:,}</td></tr>
-        <tr><td><b>Open Interest</b></td><td>{breakdown.open_interest:,}</td></tr>
-        <tr><td><b>Underlying Price</b></td><td>${breakdown.underlying_price:,.2f}</td></tr>
+        <tr><td><b>Strike</b></td><td>{_fmt_price(breakdown.strike_price)} {direction} exp {breakdown.expiration_date}</td></tr>
+        <tr><td><b>Option Price</b></td><td>{_fmt_price(breakdown.option_price)}</td></tr>
+        <tr><td><b>Volume</b></td><td>{_fmt_int(breakdown.option_volume)}</td></tr>
+        <tr><td><b>Open Interest</b></td><td>{_fmt_int(breakdown.open_interest)}</td></tr>
+        <tr><td><b>Underlying Price</b></td><td>{_fmt_price(breakdown.underlying_price)}</td></tr>
         <tr><td><b>Underlying Move</b></td><td>{breakdown.underlying_move_pct:+.2f}%</td></tr>
       </table>
       <details>
@@ -65,11 +73,11 @@ def _single_alert_text(breakdown: ScoreBreakdown) -> str:
     direction = "CALL" if breakdown.contract_type.lower() == "call" else "PUT"
     return f"""--- {breakdown.ticker} | {direction} | Score {breakdown.composite_score:.2f}/10 ---
 Contract:         {breakdown.contract}
-Strike:           ${breakdown.strike_price:,.2f} {direction} exp {breakdown.expiration_date}
-Option Price:     ${breakdown.option_price:,.2f}
-Volume:           {breakdown.option_volume:,}
-Open Interest:    {breakdown.open_interest:,}
-Underlying Price: ${breakdown.underlying_price:,.2f}
+Strike:           {_fmt_price(breakdown.strike_price)} {direction} exp {breakdown.expiration_date}
+Option Price:     {_fmt_price(breakdown.option_price)}
+Volume:           {_fmt_int(breakdown.option_volume)}
+Open Interest:    {_fmt_int(breakdown.open_interest)}
+Underlying Price: {_fmt_price(breakdown.underlying_price)}
 Underlying Move:  {breakdown.underlying_move_pct:+.2f}%
 
 Factor Breakdown:
@@ -159,9 +167,13 @@ def format_alert_email(
 ) -> MIMEMultipart:
     """Build an HTML+text MIME message for a single triggered alert.
 
-    Kept for backward compatibility; the pipeline now uses format_digest_email.
+    When *is_update* is True the subject line is prefixed with "UPDATE: "
+    to distinguish re-alerts from initial triggers.
     """
-    return format_digest_email(
+    msg = format_digest_email(
         [breakdown],
         news_by_ticker={breakdown.ticker: news} if news else None,
     )
+    if is_update:
+        msg.replace_header("Subject", f"UPDATE: {msg['Subject']}")
+    return msg

@@ -1,14 +1,11 @@
 """Rolling baseline computation for z-score calculations."""
 
-import logging
 import statistics
 from dataclasses import dataclass
 
 from src.config.constants import BASELINE_MIN_DATAPOINTS, STD_FLOOR
 from src.database.models import OptionsSnapshot
 from src.exceptions import InsufficientDataError
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,10 +41,12 @@ def z_score(observed: float, baseline: BaselineStats) -> float:
 # ---------------------------------------------------------------------------
 
 def extract_volumes(snapshots: list[OptionsSnapshot]) -> list[float]:
+    """Daily volumes from the baseline window, excluding zero-volume days."""
     return [float(s.volume) for s in snapshots if s.volume is not None and s.volume > 0]
 
 
 def extract_open_interest(snapshots: list[OptionsSnapshot]) -> list[float]:
+    """Open interest values from the baseline window."""
     return [float(s.open_interest) for s in snapshots if s.open_interest is not None]
 
 

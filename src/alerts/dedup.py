@@ -6,8 +6,8 @@ from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.constants import ALERT_RETRY_MAX, DEDUP_SCORE_DELTA
+from src.database.models import AlertSent
 from src.database.repositories.alert_repo import AlertRepo
-from src.exceptions import AlertError
 from src.scoring.models import ScoreBreakdown
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ async def log_alert_result(
     await session.commit()
 
 
-async def retry_failed_alerts(session: AsyncSession, alert_date: date) -> list:
+async def retry_failed_alerts(session: AsyncSession, alert_date: date) -> list[AlertSent]:
     """Return failed alerts eligible for retry."""
     repo = AlertRepo(session)
     return await repo.get_pending_retries(alert_date, max_retries=ALERT_RETRY_MAX)

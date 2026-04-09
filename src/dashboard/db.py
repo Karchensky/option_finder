@@ -1,14 +1,14 @@
 """Synchronous database access for Streamlit dashboard."""
 
 import streamlit as st
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
 from src.config.settings import get_settings
 
 
 @st.cache_resource
-def get_sync_engine():
+def get_sync_engine() -> Engine:
     """Return a cached synchronous SQLAlchemy engine."""
     settings = get_settings()
     url = settings.database_url

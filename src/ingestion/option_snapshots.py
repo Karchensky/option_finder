@@ -2,8 +2,8 @@
 
 import logging
 from datetime import date
-from decimal import Decimal
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.repositories.options_snapshot_repo import OptionsSnapshotRepo
@@ -21,7 +21,7 @@ async def fetch_option_chain(underlying: str) -> list[OptionSnapshotResult]:
     for r in raw_results:
         try:
             snapshots.append(OptionSnapshotResult.model_validate(r))
-        except Exception:
+        except ValidationError:
             ticker_hint = r.get("details", {}).get("ticker", "?") if isinstance(r, dict) else "?"
             logger.debug("skipping invalid option result for %s: %s", underlying, ticker_hint)
     logger.debug("fetched %d option contracts for %s", len(snapshots), underlying)

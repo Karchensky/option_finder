@@ -1,7 +1,8 @@
-"""SMTP email delivery with retry logic."""
+"""SMTP email delivery via Gmail SMTP/SSL."""
 
 import logging
 import smtplib
+from email.mime.multipart import MIMEMultipart
 
 from src.config.settings import get_settings
 from src.exceptions import AlertError
@@ -9,8 +10,8 @@ from src.exceptions import AlertError
 logger = logging.getLogger(__name__)
 
 
-def send_email(msg) -> bool:
-    """Send a MIMEMultipart email via Gmail SMTP/SSL.
+def send_email(msg: MIMEMultipart) -> bool:
+    """Send a MIME email via Gmail SMTP/SSL.
 
     Returns True if the email was actually delivered, False if skipped
     (kill-switch off, missing creds). Raises AlertError on SMTP failure.

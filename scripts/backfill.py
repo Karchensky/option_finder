@@ -28,7 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.config.settings import get_settings
-from src.database.engine import get_engine, get_session_factory, dispose_engine
+from src.database.engine import get_session_factory, dispose_engine
 from src.database.models import OptionsSnapshot, StockSnapshot
 
 logging.basicConfig(

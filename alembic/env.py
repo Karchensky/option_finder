@@ -15,6 +15,7 @@ from src.database.models import (  # noqa: F401 — ensure all models are regist
     OptionsSnapshot,
     ScoringResult,
     StockSnapshot,
+    TriggerCandidate,
 )
 
 config = context.config

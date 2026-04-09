@@ -7,6 +7,7 @@ then projects the next earnings date from the observed cadence.
 import logging
 from datetime import date, timedelta
 
+from src.exceptions import PolygonAPIError
 from src.ingestion.client import polygon_get
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ async def _fetch_filing_dates(ticker: str) -> list[date]:
                 "timeframe": "quarterly",
             },
         )
-    except Exception:
+    except PolygonAPIError:
         logger.debug("financials lookup failed for %s", ticker)
         return []
 

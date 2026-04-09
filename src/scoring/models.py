@@ -1,6 +1,6 @@
 """Data structures for score breakdowns and factor results."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 
@@ -13,7 +13,7 @@ class FactorScore:
     weight: float
     contribution: float  # z_score * weight
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, float]:
         return {
             "raw": round(self.raw, 4),
             "z_score": round(self.z_score, 4),
@@ -44,6 +44,6 @@ class ScoreBreakdown:
     expiration_date: str = ""
     strike_price: float | None = None
 
-    def factors_to_dict(self) -> dict[str, dict]:
+    def factors_to_dict(self) -> dict[str, dict[str, float]]:
         """Serialize all factors to a JSON-safe dict."""
         return {k: v.to_dict() for k, v in self.factors.items()}

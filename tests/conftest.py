@@ -1,9 +1,7 @@
 """Shared pytest fixtures for Option Finder tests."""
 
-import os
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

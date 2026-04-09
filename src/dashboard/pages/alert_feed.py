@@ -140,7 +140,7 @@ def _parse_factors(factors_raw) -> dict:
     return {}
 
 
-def _render_factor_chart(factors: dict, title: str = "Factor Contributions") -> go.Figure:
+def _render_factor_chart(factors: dict, title: str = "Factor Contributions") -> go.Figure | None:
     """Horizontal bar chart showing each factor's weighted contribution."""
     if not factors:
         return None

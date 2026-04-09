@@ -1,6 +1,5 @@
 """Repository for scoring result persistence and queries."""
 
-import logging
 from datetime import date
 
 from sqlalchemy import select
@@ -9,8 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import ScoringResult
 
-logger = logging.getLogger(__name__)
-
 
 class ScoringRepo:
     """Persistence layer for scoring results."""
@@ -18,12 +15,14 @@ class ScoringRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    _UPSERT_EXCLUDE_KEYS = frozenset({"id", "option_ticker", "snap_date", "created_at"})
+
     async def save_result(self, data: dict) -> None:
         """Insert or update a scoring result."""
         stmt = pg_insert(ScoringResult).values(**data)
         stmt = stmt.on_conflict_do_update(
             index_elements=["option_ticker", "snap_date"],
-            set_={k: v for k, v in data.items() if k not in ("option_ticker", "snap_date")},
+            set_={k: v for k, v in data.items() if k not in self._UPSERT_EXCLUDE_KEYS},
         )
         await self._session.execute(stmt)
 

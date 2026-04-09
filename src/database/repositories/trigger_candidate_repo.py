@@ -1,15 +1,12 @@
 """Repository for trigger persistence tracking across scan cycles."""
 
-import logging
 from datetime import date, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, true as sa_true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import TriggerCandidate
-
-logger = logging.getLogger(__name__)
 
 
 class TriggerCandidateRepo:
@@ -58,7 +55,7 @@ class TriggerCandidateRepo:
                 TriggerCandidate.alert_date == alert_date,
                 TriggerCandidate.expired.is_(False),
                 TriggerCandidate.confirmed.is_(False),
-                TriggerCandidate.option_ticker.not_in(active_tickers) if active_tickers else True,
+                TriggerCandidate.option_ticker.not_in(active_tickers) if active_tickers else sa_true(),
             )
             .values(expired=True, trigger_count=0)
         )
@@ -96,11 +93,12 @@ class TriggerCandidateRepo:
     async def get_confirmed_count(self, alert_date: date) -> int:
         """Return how many candidates have been confirmed today."""
         stmt = (
-            select(TriggerCandidate)
+            select(func.count())
+            .select_from(TriggerCandidate)
             .where(
                 TriggerCandidate.alert_date == alert_date,
                 TriggerCandidate.confirmed.is_(True),
             )
         )
         result = await self._session.execute(stmt)
-        return len(result.scalars().all())
+        return result.scalar_one()
