@@ -223,3 +223,14 @@ Migrations 001-002 create the base schema. Migration 003 adds the trigger grace 
 ## License
 
 [MIT](LICENSE)
+
+## Setup
+
+### Automatic start
+  Open an admin terminal (right-click cmd -> Run as administrator) and run:
+  schtasks /create /tn "OptionFinder" /tr "D:\Scripts\option_finder\scripts\run_all.bat" /sc onlogon /rl highest
+ -- to end: schtasks /delete /tn "OptionFinder" /f
+
+### Manual start
+  Double-click:
+  D:\Scripts\option_finder\scripts\run_all.bat
