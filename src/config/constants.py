@@ -65,6 +65,8 @@ ALREADY_PRICED_IN_THRESHOLD: float = 0.02  # 2 %
 # Alert deduplication
 # ---------------------------------------------------------------------------
 DEDUP_SCORE_DELTA: float = 1.0
+CROSS_DAY_DEDUP_LOOKBACK_DAYS: int = 3  # suppress re-alerts within N days unless score increases
+CROSS_DAY_DEDUP_SCORE_DELTA: float = 1.5  # required score increase for cross-day re-alert
 
 # ---------------------------------------------------------------------------
 # Polygon API
@@ -77,6 +79,7 @@ POLYGON_PAGE_DELAY_S: float = 0.1  # 100 ms between paginated requests
 # Trigger persistence -- require anomaly across consecutive scans
 # ---------------------------------------------------------------------------
 TRIGGER_CONFIRM_SCANS: int = 2  # must trigger in N consecutive scans before alerting
+TRIGGER_EXPIRE_GRACE_SCANS: int = 1  # missed scans allowed before expiring a candidate
 
 # ---------------------------------------------------------------------------
 # Pipeline resilience

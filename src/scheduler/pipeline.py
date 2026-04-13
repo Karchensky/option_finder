@@ -3,18 +3,21 @@
 import asyncio
 import logging
 import re
+import statistics
 import time
 from datetime import date, datetime, timezone
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from src.alerts.dedup import log_alert_result, should_send_alert
+from src.alerts.dedup import log_alert_result, retry_failed_alerts, should_send_alert
 from src.alerts.formatter import format_digest_email
 from src.alerts.sender import send_email
-from src.config.constants import EASTERN, MIN_PREMIUM_THRESHOLD, TRIGGER_CONFIRM_SCANS
+from src.config.constants import BASELINE_MIN_DATAPOINTS, EASTERN, MIN_PREMIUM_THRESHOLD, TRIGGER_CONFIRM_SCANS
 from src.database.engine import get_session_factory
+from src.database.repositories.alert_repo import AlertRepo
 from src.database.repositories.options_snapshot_repo import OptionsSnapshotRepo
 from src.database.repositories.scoring_repo import ScoringRepo
+from src.database.repositories.stock_snapshot_repo import StockSnapshotRepo
 from src.database.repositories.trigger_candidate_repo import TriggerCandidateRepo
 from src.exceptions import AlertError, OptionFinderError, PolygonAPIError
 from src.ingestion.earnings import days_until_earnings, fetch_next_earnings_date
@@ -24,7 +27,7 @@ from src.ingestion.option_snapshots import ingest_option_chain
 from src.ingestion.schemas import StockTickerSnapshot
 from src.ingestion.stock_snapshots import get_large_movers, ingest_stock_snapshots
 from src.scoring.composite import score_contract
-from src.scoring.models import ScoreBreakdown
+from src.scoring.models import FactorScore, ScoreBreakdown
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,13 @@ async def _process_underlying(
                 chain_vol_history = await opt_repo.get_chain_volume_history(underlying, snap_date)
                 otm_frac_history = await opt_repo.get_otm_fraction_history(underlying, snap_date)
 
+                # Compute realized vol for underlying_z normalization (once per underlying)
+                stock_repo = StockSnapshotRepo(session)
+                change_history = await stock_repo.get_change_pct_history(underlying, snap_date)
+                u_daily_std: float | None = None
+                if len(change_history) >= BASELINE_MIN_DATAPOINTS:
+                    u_daily_std = statistics.pstdev(change_history)
+
                 dte_earnings: int | None = None
                 try:
                     earnings_date = await fetch_next_earnings_date(underlying, as_of=snap_date)
@@ -135,6 +145,7 @@ async def _process_underlying(
                             days_to_earnings=dte_earnings,
                             chain_volume_history=chain_vol_history,
                             otm_frac_history=otm_frac_history,
+                            underlying_daily_std=u_daily_std,
                         )
                         local_stats["contracts_scored"] += 1
                         score_rows.append(_breakdown_to_row(breakdown, snap_date))
@@ -176,6 +187,94 @@ async def _process_underlying(
     return local_stats
 
 
+def _reconstruct_breakdown(
+    scoring: "ScoringResult",
+    snap: "OptionsSnapshot | None",
+) -> ScoreBreakdown:
+    """Reconstruct a ScoreBreakdown from persisted scoring + snapshot data for retry."""
+    factors: dict[str, FactorScore] = {}
+    for key, fdata in (scoring.factors or {}).items():
+        factors[key] = FactorScore(
+            raw=fdata.get("raw", 0.0),
+            z_score=fdata.get("z_score", 0.0),
+            weight=fdata.get("weight", 0.0),
+            contribution=fdata.get("contribution", 0.0),
+        )
+
+    return ScoreBreakdown(
+        ticker=scoring.underlying_ticker,
+        contract=scoring.option_ticker,
+        composite_score=float(scoring.composite_score),
+        factors=factors,
+        underlying_move_pct=float(scoring.underlying_move_pct or 0),
+        already_priced_in=scoring.already_priced_in,
+        timestamp=datetime.now(timezone.utc),
+        triggered=scoring.triggered,
+        underlying_price=float(snap.underlying_price) if snap and snap.underlying_price else None,
+        option_price=float(snap.close) if snap and snap.close else None,
+        option_volume=snap.volume if snap else None,
+        open_interest=snap.open_interest if snap else None,
+        contract_type=snap.contract_type if snap else "",
+        expiration_date=str(snap.expiration_date) if snap else "",
+        strike_price=float(snap.strike_price) if snap else None,
+    )
+
+
+async def _retry_failed_alerts(
+    factory: async_sessionmaker[AsyncSession],
+    snap_date: date,
+) -> int:
+    """Retry sending alerts that failed in earlier scan cycles today.
+
+    Returns the number of alerts successfully retried.
+    """
+    async with factory() as session:
+        failed = await retry_failed_alerts(session, snap_date)
+        if not failed:
+            return 0
+
+        logger.info("found %d failed alerts eligible for retry", len(failed))
+
+        scoring_repo = ScoringRepo(session)
+        opt_repo = OptionsSnapshotRepo(session)
+        alert_repo = AlertRepo(session)
+        breakdowns: list[ScoreBreakdown] = []
+        alert_ids: list[int] = []
+
+        for alert in failed:
+            scoring = await scoring_repo.get_by_option_ticker_date(
+                alert.option_ticker, snap_date,
+            )
+            if scoring is None:
+                logger.debug("no scoring result for retry of %s — skipping", alert.option_ticker)
+                continue
+            snap = await opt_repo.get_by_option_ticker_date(alert.option_ticker, snap_date)
+            breakdowns.append(_reconstruct_breakdown(scoring, snap))
+            alert_ids.append(alert.id)
+
+        if not breakdowns:
+            return 0
+
+        msg = format_digest_email(breakdowns)
+        msg.replace_header("Subject", f"RETRY: {msg['Subject']}")
+
+        try:
+            sent = send_email(msg)
+            if sent:
+                for aid in alert_ids:
+                    await alert_repo.mark_sent(aid)
+                await session.commit()
+                logger.info("successfully retried %d failed alerts", len(breakdowns))
+                return len(breakdowns)
+            return 0
+        except AlertError:
+            logger.exception("retry attempt also failed — incrementing retry counts")
+            for aid in alert_ids:
+                await alert_repo.increment_retry_count(aid)
+            await session.commit()
+            return 0
+
+
 async def run_scan_cycle() -> dict:
     """Execute one full scan cycle and return stats."""
     stats = {
@@ -187,6 +286,7 @@ async def run_scan_cycle() -> dict:
         "alerts_fired": 0,
         "alerts_suppressed": 0,
         "alerts_skipped_email_off": 0,
+        "alerts_retried": 0,
         "errors": 0,
     }
     t0 = time.monotonic()
@@ -295,6 +395,7 @@ async def run_scan_cycle() -> dict:
                         "first_triggered_at": now,
                         "last_triggered_at": now,
                         "trigger_count": 1,
+                        "missed_scans": 0,
                         "peak_score": breakdown.composite_score,
                         "peak_factors": breakdown.factors_to_dict(),
                         "confirmed": False,
@@ -383,10 +484,16 @@ async def run_scan_cycle() -> dict:
     else:
         logger.info("scan produced 0 triggered alerts — no email to send")
 
+    # 8. Retry failed alerts from earlier scan cycles today
+    try:
+        stats["alerts_retried"] = await _retry_failed_alerts(factory, snap_date)
+    except Exception:
+        logger.exception("alert retry step failed")
+
     stats["duration_s"] = round(time.monotonic() - t0, 2)
     logger.info(
         "scan cycle complete in %.1fs — stocks=%d underlyings=%d scored=%d "
-        "persisted=%d alerts_fired=%d suppressed=%d email_off=%d errors=%d",
+        "persisted=%d alerts_fired=%d suppressed=%d email_off=%d retried=%d errors=%d",
         stats["duration_s"],
         stats["stocks_fetched"],
         stats["underlyings_scanned"],
@@ -395,6 +502,7 @@ async def run_scan_cycle() -> dict:
         stats["alerts_fired"],
         stats["alerts_suppressed"],
         stats["alerts_skipped_email_off"],
+        stats["alerts_retried"],
         stats["errors"],
     )
     return stats

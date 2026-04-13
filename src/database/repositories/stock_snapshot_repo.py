@@ -1,6 +1,6 @@
 """Repository for stock snapshot CRUD operations."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -50,6 +50,32 @@ class StockSnapshotRepo:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_change_pct_history(
+        self,
+        ticker: str,
+        as_of_date: date,
+        lookback_days: int = 20,
+    ) -> list[float]:
+        """Return daily change_pct values over the baseline window.
+
+        Used to compute realized volatility for normalizing the underlying_z
+        scoring factor.
+        """
+        start_date = as_of_date - timedelta(days=lookback_days * 2)
+        stmt = (
+            select(StockSnapshot.change_pct)
+            .where(
+                StockSnapshot.ticker == ticker,
+                StockSnapshot.snap_date >= start_date,
+                StockSnapshot.snap_date < as_of_date,
+                StockSnapshot.change_pct.is_not(None),
+            )
+            .order_by(StockSnapshot.snap_date.desc())
+            .limit(lookback_days)
+        )
+        result = await self._session.execute(stmt)
+        return [float(row[0]) for row in result.fetchall()]
 
     async def get_movers(self, snap_date: date, min_change_pct: float | Decimal = 2.0) -> list[StockSnapshot]:
         """Return stocks that moved more than *min_change_pct* on *snap_date*."""

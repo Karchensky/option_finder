@@ -5,7 +5,12 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.constants import ALERT_RETRY_MAX, DEDUP_SCORE_DELTA
+from src.config.constants import (
+    ALERT_RETRY_MAX,
+    CROSS_DAY_DEDUP_LOOKBACK_DAYS,
+    CROSS_DAY_DEDUP_SCORE_DELTA,
+    DEDUP_SCORE_DELTA,
+)
 from src.database.models import AlertSent
 from src.database.repositories.alert_repo import AlertRepo
 from src.scoring.models import ScoreBreakdown
@@ -26,6 +31,7 @@ async def should_send_alert(
     """
     repo = AlertRepo(session)
 
+    # Same-day dedup (existing logic)
     has_prior = await repo.has_prior_alert(breakdown.contract, alert_date)
 
     if has_prior:
@@ -45,6 +51,26 @@ async def should_send_alert(
             return False, False
         # Prior alert exists but score increased enough — send as update
         return True, True
+
+    # Cross-day dedup: suppress if same contract alerted within lookback
+    # window and score hasn't increased enough to warrant a new alert
+    if CROSS_DAY_DEDUP_LOOKBACK_DAYS > 0:
+        is_cross_day_dup = await repo.check_cross_day_dedup(
+            option_ticker=breakdown.contract,
+            alert_date=alert_date,
+            new_score=breakdown.composite_score,
+            lookback_days=CROSS_DAY_DEDUP_LOOKBACK_DAYS,
+            score_delta=CROSS_DAY_DEDUP_SCORE_DELTA,
+        )
+        if is_cross_day_dup:
+            logger.info(
+                "cross-day dedup suppressed %s (score %.2f) — alerted within last %d days, score increase < %.1f",
+                breakdown.contract,
+                breakdown.composite_score,
+                CROSS_DAY_DEDUP_LOOKBACK_DAYS,
+                CROSS_DAY_DEDUP_SCORE_DELTA,
+            )
+            return False, False
 
     return True, False
 

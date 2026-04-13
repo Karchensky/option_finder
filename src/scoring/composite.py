@@ -42,6 +42,7 @@ def score_contract(
     days_to_earnings: int | None = None,
     chain_volume_history: list[float] | None = None,
     otm_frac_history: list[float] | None = None,
+    underlying_daily_std: float | None = None,
 ) -> ScoreBreakdown:
     """Compute the full composite score for a single option contract.
 
@@ -110,7 +111,7 @@ def score_contract(
     except InsufficientDataError:
         factors["spread_z"] = _zero_factor("spread_z")
 
-    factors["underlying_z"] = compute_underlying_move(underlying_change_pct, contract_type)
+    factors["underlying_z"] = compute_underlying_move(underlying_change_pct, contract_type, underlying_daily_std)
 
     # Weighted sum -> dampen by baseline confidence -> normalise to 0-10
     raw_composite = sum(f.contribution for f in factors.values())

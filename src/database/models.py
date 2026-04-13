@@ -119,6 +119,7 @@ class AlertSent(Base, TimestampMixin):
     __tablename__ = "alerts_sent"
     __table_args__ = (
         Index("ix_alerts_sent_ticker_date", "option_ticker", "alert_date"),
+        Index("ix_alerts_sent_status_date", "status", "alert_date", "option_ticker"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -156,6 +157,7 @@ class TriggerCandidate(Base, TimestampMixin):
     first_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     trigger_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    missed_scans: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     peak_score: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)
     peak_factors: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

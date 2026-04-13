@@ -66,8 +66,13 @@ def extract_volumes(snapshots: list[OptionsSnapshot]) -> list[float]:
 
 
 def extract_open_interest(snapshots: list[OptionsSnapshot]) -> list[float]:
-    """Open interest values from the baseline window."""
-    return [float(s.open_interest) for s in snapshots if s.open_interest is not None]
+    """Open interest values from the baseline window, excluding zero-OI days.
+
+    Zero-OI days artificially deflate the baseline mean and std, which
+    inflates z-scores on any day with real OI activity.
+    """
+    return [float(s.open_interest) for s in snapshots
+            if s.open_interest is not None and s.open_interest > 0]
 
 
 def extract_premiums(snapshots: list[OptionsSnapshot]) -> list[float]:

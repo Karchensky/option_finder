@@ -88,12 +88,20 @@ def compute_iv_spike(
 
     A surging IV relative to recent history signals the market is pricing
     in an imminent event -- strong signal independent of volume.
+
+    Falls back to a conservative thin-baseline heuristic for contracts
+    with 1-4 IV data points, consistent with vol_z and prem_z.
     """
     if current_iv <= 0:
         return _make_factor("iv_z", 0.0, 0.0)
 
     ivs = extract_implied_volatility(baseline_snapshots)
-    bl = compute_baseline(ivs, ticker=ticker)
+    try:
+        bl = compute_baseline(ivs, ticker=ticker)
+    except InsufficientDataError:
+        bl = compute_thin_baseline(ivs)
+        if bl is None:
+            return _make_factor("iv_z", current_iv, 0.0)
     z = z_score(current_iv, bl)
     return _make_factor("iv_z", current_iv, z)
 
@@ -291,17 +299,28 @@ def compute_spread(
 def compute_underlying_move(
     underlying_change_pct: float,
     contract_type: str,
+    underlying_daily_std: float | None = None,
 ) -> FactorScore:
     """Stock move correlated with options bet direction.
 
     Positive contribution when stock moves in the same direction as
-    the bet (calls + stock up, puts + stock down). Scales proportionally
-    with move magnitude — a 3% directional move produces a higher
-    z-score than a 0.5% move.
+    the bet (calls + stock up, puts + stock down).
+
+    When *underlying_daily_std* (the stock's 20-day realized volatility
+    of daily percentage changes) is available, the move is normalized by
+    it so that a 1% move on a low-vol utility stock scores higher than
+    a 1% move on a high-vol tech stock.  Falls back to a flat divisor
+    of 1.0 when history is insufficient.
     """
     is_call = contract_type.lower() == "call"
     directional = underlying_change_pct if is_call else -underlying_change_pct
-    z = directional / 1.0
+    # Floor at 0.5 to prevent extreme z-scores on near-zero vol stocks.
+    # Uses max() rather than an if/else to avoid a discontinuity at the threshold.
+    if underlying_daily_std is not None and underlying_daily_std > 0:
+        divisor = max(underlying_daily_std, 0.5)
+    else:
+        divisor = 1.0
+    z = directional / divisor
     return _make_factor("underlying_z", underlying_change_pct, z)
 
 

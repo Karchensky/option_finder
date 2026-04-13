@@ -2,10 +2,11 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import func, select, true as sa_true, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.constants import TRIGGER_EXPIRE_GRACE_SCANS
 from src.database.models import TriggerCandidate
 
 
@@ -23,10 +24,17 @@ class TriggerCandidateRepo:
             set_={
                 "last_triggered_at": data["last_triggered_at"],
                 "trigger_count": TriggerCandidate.trigger_count + 1,
+                "missed_scans": 0,  # reset on re-trigger
                 "peak_score": func.greatest(
                     TriggerCandidate.peak_score, stmt.excluded.peak_score,
                 ),
-                "peak_factors": stmt.excluded.peak_factors,
+                # Only update peak_factors when the new score exceeds the current peak,
+                # so factors always correspond to the peak_score.
+                "peak_factors": case(
+                    (stmt.excluded.peak_score > TriggerCandidate.peak_score,
+                     stmt.excluded.peak_factors),
+                    else_=TriggerCandidate.peak_factors,
+                ),
                 "expired": False,
             },
         )
@@ -46,22 +54,40 @@ class TriggerCandidateRepo:
         alert_date: date,
         active_tickers: set[str],
     ) -> int:
-        """Mark candidates that did NOT trigger in this scan as expired.
+        """Increment missed_scans for candidates absent from this scan, then
+        expire those that exceed the grace period.
 
-        Resetting them prevents non-consecutive triggers from accumulating.
-        Returns the number of rows expired.
+        Allows illiquid options to survive a brief gap between triggers
+        instead of being immediately reset.  Returns the number of rows expired.
         """
-        stmt = (
+        # Step 1: Increment missed_scans for non-active, non-confirmed, non-expired candidates
+        inc_filter = [
+            TriggerCandidate.alert_date == alert_date,
+            TriggerCandidate.expired.is_(False),
+            TriggerCandidate.confirmed.is_(False),
+        ]
+        if active_tickers:
+            inc_filter.append(TriggerCandidate.option_ticker.not_in(active_tickers))
+
+        inc_stmt = (
+            update(TriggerCandidate)
+            .where(*inc_filter)
+            .values(missed_scans=TriggerCandidate.missed_scans + 1)
+        )
+        await self._session.execute(inc_stmt)
+
+        # Step 2: Expire those that have now exceeded the grace period
+        expire_stmt = (
             update(TriggerCandidate)
             .where(
                 TriggerCandidate.alert_date == alert_date,
                 TriggerCandidate.expired.is_(False),
                 TriggerCandidate.confirmed.is_(False),
-                TriggerCandidate.option_ticker.not_in(active_tickers) if active_tickers else sa_true(),
+                TriggerCandidate.missed_scans > TRIGGER_EXPIRE_GRACE_SCANS,
             )
             .values(expired=True, trigger_count=0)
         )
-        result = await self._session.execute(stmt)
+        result = await self._session.execute(expire_stmt)
         await self._session.flush()
         return result.rowcount
 

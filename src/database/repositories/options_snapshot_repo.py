@@ -66,6 +66,22 @@ class OptionsSnapshotRepo:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_by_option_ticker_date(
+        self,
+        option_ticker: str,
+        snap_date: date,
+    ) -> OptionsSnapshot | None:
+        """Fetch a single options snapshot by option ticker and date."""
+        stmt = (
+            select(OptionsSnapshot)
+            .where(
+                OptionsSnapshot.option_ticker == option_ticker,
+                OptionsSnapshot.snap_date == snap_date,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_underlying_date(
         self,
         underlying_ticker: str,

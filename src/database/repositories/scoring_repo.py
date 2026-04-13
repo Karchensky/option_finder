@@ -47,6 +47,22 @@ class ScoringRepo:
             await self._session.execute(stmt)
         await self._session.flush()
 
+    async def get_by_option_ticker_date(
+        self,
+        option_ticker: str,
+        snap_date: date,
+    ) -> ScoringResult | None:
+        """Fetch a single scoring result by option ticker and date."""
+        stmt = (
+            select(ScoringResult)
+            .where(
+                ScoringResult.option_ticker == option_ticker,
+                ScoringResult.snap_date == snap_date,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_triggered(self, snap_date: date) -> list[ScoringResult]:
         """Return all triggered scoring results for a given date."""
         stmt = (
