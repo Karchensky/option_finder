@@ -3,7 +3,8 @@ name = "option-finder"
 version = "0.1.0"
 description = "Anomalous options activity detection for the US equity options market"
 requires-python = ">=3.11"
-readme = "claude.md"
+readme = "README.md"
+license = {text = "MIT"}
 
 dependencies = [
     "httpx>=0.27",
@@ -22,6 +23,8 @@ dependencies = [
     "streamlit>=1.38",
     "plotly>=5.22",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
