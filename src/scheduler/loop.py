@@ -5,9 +5,11 @@ import logging
 import signal
 import sys
 import types
+from datetime import datetime, time, timedelta
 
 from src.config.constants import (
     CYCLE_RETRY_DELAY_S,
+    EASTERN,
     MAX_CONSECUTIVE_FAILURES,
     SCAN_CYCLE_INTERVAL_S,
 )
@@ -20,6 +22,28 @@ logger = logging.getLogger(__name__)
 _shutdown_requested = False
 
 MARKET_CLOSED_SLEEP_S = 300  # 5 min between checks when market is closed
+
+# Business-hour window (ET) — scanner sleeps outside this range.
+# Padded 30 min before open and 60 min after close for data settling.
+_BIZ_OPEN = time(9, 0)
+_BIZ_CLOSE = time(17, 0)
+_BIZ_WEEKDAYS = range(0, 5)  # Mon=0 … Fri=4
+
+
+def _seconds_until_next_window() -> float | None:
+    """Return seconds until the next business window, or None if inside it now."""
+    now = datetime.now(EASTERN)
+    if now.weekday() in _BIZ_WEEKDAYS and _BIZ_OPEN <= now.time() <= _BIZ_CLOSE:
+        return None  # inside window
+
+    # Find the next weekday at _BIZ_OPEN
+    target = now.replace(hour=_BIZ_OPEN.hour, minute=_BIZ_OPEN.minute, second=0, microsecond=0)
+    if now.time() > _BIZ_CLOSE or now.weekday() not in _BIZ_WEEKDAYS:
+        target += timedelta(days=1)
+    while target.weekday() not in _BIZ_WEEKDAYS:
+        target += timedelta(days=1)
+
+    return (target - now).total_seconds()
 
 
 def _request_shutdown(signum: int, frame: types.FrameType | None) -> None:
@@ -56,6 +80,17 @@ async def run_loop() -> None:
 
     try:
         while not _shutdown_requested:
+            # Sleep outside business hours instead of polling every 5 min
+            sleep_for = _seconds_until_next_window()
+            if sleep_for is not None:
+                hours = sleep_for / 3600
+                logger.info(
+                    "outside business hours (Mon-Fri %s-%s ET) — sleeping %.1f hours",
+                    _BIZ_OPEN.strftime("%H:%M"), _BIZ_CLOSE.strftime("%H:%M"), hours,
+                )
+                await asyncio.sleep(sleep_for)
+                continue
+
             try:
                 stats = await run_scan_cycle()
                 consecutive_failures = 0
