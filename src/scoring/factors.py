@@ -5,6 +5,7 @@ from datetime import date
 
 from src.config.constants import BASELINE_MIN_DATAPOINTS, FACTOR_WEIGHT_MAP, STD_FLOOR, Z_SCORE_CAP
 from src.database.models import OptionsSnapshot
+from src.exceptions import InsufficientDataError
 from src.scoring.baseline import (
     BaselineStats,
     compute_baseline,

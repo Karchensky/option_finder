@@ -20,31 +20,35 @@ Unusual options activity that deviates significantly from historical norms, part
 
 ### Tier 1 -- High Signal Value
 
-**Volume Spike** (`vol_z`, weight 0.18): Single-day contract volume exceeding 3+ standard deviations above the 20-day rolling mean. Most reliable when concentrated in specific strikes/expirations rather than spread across the chain.
+Weights match `FACTOR_WEIGHTS` in `src/config/constants.py`.
 
-**Premium Surge** (`prem_z`, weight 0.13): Total dollar premium (price x volume x 100) for a contract far exceeding baseline. Captures both volume and price conviction simultaneously.
+**Volume Spike** (`vol_z`, weight 0.16): Single-day contract volume vs a 20-day rolling baseline (thin histories use a conservative heuristic). Most reliable when concentrated in specific strikes/expirations rather than spread across the chain.
+
+**Premium Surge** (`prem_z`, weight 0.11): Total dollar premium (price x volume x 100) for a contract far exceeding baseline. Captures both volume and price conviction simultaneously.
 
 **IV Spike** (`iv_z`, weight 0.13): Implied volatility surging relative to its own 20-day history. The market is pricing in an imminent event, independent of volume -- a strong signal that complements flow-based factors.
 
-**Volume/OI Ratio** (`vol_oi_z`, weight 0.12): Today's volume divided by prior-day settled open interest, z-scored against its 20-day baseline. A ratio > 1.0 means more contracts traded today than exist in open positions -- strongly suggests new position opening rather than closing.
+**Volume/OI Ratio** (`vol_oi_z`, weight 0.11): Today's volume divided by prior-day settled open interest, z-scored against its 20-day baseline (or a conservative ratio heuristic when baseline is thin). A ratio > 1.0 means more contracts traded today than exist in open positions -- strongly suggests new position opening rather than closing.
 
-**Sweep Orders** (`sweep_z`, weight 0.10): Currently a volume-extremity proxy (only contributes when volume > 2 sigma above mean). True sweep detection requires trade-level condition codes and multi-exchange fill clustering.
+**Sweep proxy** (`sweep_z`, weight 0.09): Volume-extremity proxy (positive contribution only when volume is more than ~2 sigma above baseline mean). True sweep detection requires trade-level condition codes and multi-exchange fill clustering.
 
 ### Tier 2 -- Medium Signal Value
 
-**Delta Concentration** (`delta_conc_z`, weight 0.08): Fraction of chain volume in deep-OTM contracts, using |delta| < 0.20 from greeks. Falls back to strike/price comparison when greeks are unavailable. Informed traders often buy cheap OTM options for leverage.
+**Chain volume** (`chain_vol_z`, weight 0.07): Total underlying chain volume vs its 20-day history. Contextualises per-contract spikes: a quiet chain makes an isolated strike spike more suspicious than when the whole chain is active.
+
+**Delta Concentration** (`delta_conc_z`, weight 0.07): Fraction of chain volume in deep-OTM contracts, using |delta| < 0.20 from greeks. Falls back to strike/price comparison when greeks are unavailable. Informed traders often buy cheap OTM options for leverage.
 
 **Open Interest Change** (`oi_z`, weight 0.07): Day-over-day OI delta vs baseline. Note: OI is always the prior-day settlement figure (OCC calculates after market close). This is a valid but lagging signal, complemented by the real-time Volume/OI ratio.
 
 **Earnings Proximity** (`earnings_z`, weight 0.07): Dampener that applies a negative z-score when the underlying is within 14 days of an earnings report. Options volume naturally spikes before earnings -- this prevents flagging expected pre-earnings activity as anomalous. Earnings dates estimated from quarterly filing dates via Polygon `/vX/reference/financials`.
 
-**Time-to-Expiry Bias** (`tte_z`, weight 0.06): Short-dated options (< 14 DTE) receive positive signal. Unusually heavy volume in near-term expirations suggests a trader expects a catalyst soon.
+**Time-to-Expiry Bias** (`tte_z`, weight 0.05): Short-dated options (< 14 DTE) receive positive signal. Unusually heavy volume in near-term expirations suggests a trader expects a catalyst soon.
 
 ### Tier 3 -- Supporting Signals
 
 **Bid-Ask Spread Compression** (`spread_z`, weight 0.04): Tighter-than-normal spreads on unusual volume suggest market makers are accommodating informed flow.
 
-**Underlying Price Correlation** (`underlying_z`, weight 0.02): Stock price moving in the direction of the options bet. Adds conviction when present but absence does not invalidate.
+**Underlying Price Correlation** (`underlying_z`, weight 0.03): Stock price moving in the direction of the options bet. Adds conviction when present but absence does not invalidate.
 
 ### Gate -- Already Priced In
 
@@ -99,29 +103,31 @@ Use `floor = 0.01` to prevent division by zero on low-activity contracts.
 ### Multi-Factor Composite Score
 
 ```python
-composite = sum(factor.z_score * factor.weight for factor in factors)
-normalized = min(10.0, max(0.0, composite * scale_factor))
+raw_composite = sum(factor.z_score * factor.weight for factor in factors)
+raw_composite *= confidence  # baseline depth: 0.5 .. 1.0 (see src/scoring/composite.py)
+normalized = min(10.0, max(0.0, raw_composite * 2.0))
 ```
 
-Current weights (11 factors, sum = 1.00):
+Current weights (12 factors, sum = 1.00) — edit `FACTOR_WEIGHTS` in `src/config/constants.py`:
 
 | Factor | Key | Weight |
 |--------|-----|--------|
-| Volume Spike | `vol_z` | 0.18 |
-| Premium Surge | `prem_z` | 0.13 |
+| Volume Spike | `vol_z` | 0.16 |
+| Premium Surge | `prem_z` | 0.11 |
 | IV Spike | `iv_z` | 0.13 |
-| Volume/OI Ratio | `vol_oi_z` | 0.12 |
-| Sweep Detection | `sweep_z` | 0.10 |
-| Delta Concentration | `delta_conc_z` | 0.08 |
+| Volume/OI Ratio | `vol_oi_z` | 0.11 |
+| Sweep proxy | `sweep_z` | 0.09 |
+| Chain volume | `chain_vol_z` | 0.07 |
+| Delta Concentration | `delta_conc_z` | 0.07 |
 | OI Change | `oi_z` | 0.07 |
 | Earnings Proximity | `earnings_z` | 0.07 |
-| Time-to-Expiry | `tte_z` | 0.06 |
+| Time-to-Expiry | `tte_z` | 0.05 |
 | Bid-Ask Spread | `spread_z` | 0.04 |
-| Underlying Move | `underlying_z` | 0.02 |
+| Underlying Move | `underlying_z` | 0.03 |
 
 ### Alert Threshold
 
-Fire alert when `composite_score >= ANOMALY_ALERT_MIN_SCORE` (default 7.5 on 0-10 scale) AND the already-priced-in gate has not suppressed the signal. Target: 1-5 alerts per trading day. Do not re-alert on the same contract within the same trading day unless the score increases by 1.0+.
+Fire alert when `composite_score >= ANOMALY_ALERT_MIN_SCORE` AND the already-priced-in gate has not suppressed the signal. **`Settings.anomaly_alert_min_score` defaults to 6.0** (see `src/config/settings.py`); override with `ANOMALY_ALERT_MIN_SCORE` in `.env` (e.g. 7.5 for fewer, stricter alerts). Target: 1-5 alerts per trading day. Do not re-alert on the same contract within the same trading day unless the score increases by 1.0+.
 
 ## Backtesting Framework
 
@@ -137,7 +143,7 @@ Fire alert when `composite_score >= ANOMALY_ALERT_MIN_SCORE` (default 7.5 on 0-1
 - **Average Return**: Mean return across all signals (including full losses)
 - **Profit Factor**: Gross wins / gross losses
 - **Time to Exit**: Average days from signal to TP500 (for winners)
-- **Score Calibration**: Hit rate bucketed by score range (7.5-8.0, 8.0-8.5, etc.)
+- **Score Calibration**: Hit rate bucketed by score range (tune buckets to your chosen `ANOMALY_ALERT_MIN_SCORE`, e.g. 6.0-6.5, 6.5-7.0)
 
 ### Baseline Comparison
 

@@ -9,13 +9,13 @@ src/
   config/           Settings (from .env) and constants (weights, thresholds)
   database/         SQLAlchemy 2.0 models, Alembic migrations, repository layer
   ingestion/        Polygon REST client, stock/option snapshot fetchers, news, flat-file loader
-  scoring/          Z-score baseline, 11 factor calculators, composite scorer, priced-in gate
+  scoring/          Z-score baseline, 12 factor calculators, composite scorer, priced-in gate
   alerts/           Email formatter (HTML + plaintext), SMTP sender, deduplication
   scheduler/        Main scan loop, single-cycle pipeline orchestration
   dashboard/        Streamlit app (alert feed, ticker lookup, system status)
   backtest/         (Stub) TP500 backtesting framework
 scripts/            Backfill script, diagnostic probes
-tests/              pytest suite (38 tests covering config, ingestion, scoring, alerts)
+tests/              pytest suite (47+ tests covering config, ingestion, scoring, alerts)
 alembic/            Database migration scripts
 ```
 
@@ -31,7 +31,7 @@ Module dependency order: `config` -> `database` -> `ingestion` -> `scoring` -> `
 4. **DB upsert** -- All snapshot data is bulk-upserted into PostgreSQL. Each contract gets one row per day in `options_snapshots`.
 5. **Scoring** -- Every contract with volume >= 100 and dollar premium >= $10K is scored:
    - Load the contract's prior 20 trading days from the database
-   - Compute z-scores for 11 factors (see below)
+   - Compute z-scores for 12 weighted factors (see below)
    - Apply weighted sum, dampen by baseline confidence, normalize to 0-10 scale
    - Check the "already priced in" gate
 6. **Trigger persistence** -- Contracts must trigger in 2+ consecutive scan cycles before an alert fires. This filters out ephemeral volume spikes that disappear between delayed snapshots.
@@ -48,17 +48,20 @@ All Polygon data is 15 minutes delayed. This is the defining constraint. The sca
 
 Each factor computes a z-score: `(observed - mean) / std` against a 20-day rolling baseline for that specific contract.
 
+Canonical weights: `src/config/constants.py` (`FACTOR_WEIGHTS`). Twelve weighted factors (sum = 1.00):
+
 | Factor | Key | Weight | What It Measures |
 |--------|-----|--------|------------------|
-| Volume Spike | `vol_z` | 0.17 | Contract volume vs 20-day average |
-| IV Spike | `iv_z` | 0.14 | Implied volatility vs its own 20-day baseline; captures the market pricing in an event independent of volume |
-| Premium Surge | `prem_z` | 0.12 | Dollar premium (price x volume x 100) vs baseline |
-| Volume/OI Ratio | `vol_oi_z` | 0.12 | Today's volume / prior-day OI vs baseline; ratio > 1.0 = more contracts traded than currently exist, strongly suggests new position opening |
-| Chain Volume | `chain_vol_z` | 0.09 | Total chain volume vs 20-day avg; dampens isolated contract spikes |
-| Delta Concentration | `delta_conc_z` | 0.08 | Fraction of chain volume in deep-OTM contracts (\|delta\| < 0.20); uses greeks directly, falls back to strike/price for contracts without delta |
-| OI Change | `oi_z` | 0.08 | Day-over-day open interest delta vs baseline. Note: OI is always the prior-day settlement figure (OCC calculates after close), so this is a lagging indicator |
-| Earnings Proximity | `earnings_z` | 0.07 | Dampener: applies a negative z-score when the underlying is within 14 days of an earnings report, since pre-earnings volume spikes are expected behaviour |
-| Time-to-Expiry | `tte_z` | 0.06 | Shorter DTE = stronger signal (< 14 DTE contributes positively) |
+| Volume Spike | `vol_z` | 0.16 | Contract volume vs 20-day average |
+| Premium Surge | `prem_z` | 0.11 | Dollar premium (price x volume x 100) vs baseline |
+| IV Spike | `iv_z` | 0.13 | Implied volatility vs its own 20-day baseline |
+| Volume/OI Ratio | `vol_oi_z` | 0.11 | Today's volume / prior-day OI vs baseline; ratio > 1.0 suggests new position opening |
+| Sweep proxy | `sweep_z` | 0.09 | Volume-extremity proxy (aggressive flow pattern) |
+| Chain Volume | `chain_vol_z` | 0.07 | Total chain volume vs 20-day avg; contextualises isolated contract spikes |
+| Delta Concentration | `delta_conc_z` | 0.07 | Fraction of chain volume in deep-OTM (\|delta\| < 0.20); falls back to strike/price without delta |
+| OI Change | `oi_z` | 0.07 | Day-over-day OI delta vs baseline (lagging: prior-day settlement) |
+| Earnings Proximity | `earnings_z` | 0.07 | Dampener near earnings (expected volume spike) |
+| Time-to-Expiry | `tte_z` | 0.05 | Shorter DTE = stronger signal (< 14 DTE contributes positively) |
 | Bid-Ask Spread | `spread_z` | 0.04 | Tighter-than-normal spread on unusual volume (inverted z-score) |
 | Underlying Move | `underlying_z` | 0.03 | Stock move correlated with bet direction |
 
@@ -68,10 +71,11 @@ Each factor computes a z-score: `(observed - mean) / std` against a 20-day rolli
 
 ```
 raw_composite = sum(z_score * weight for each factor)
+raw_composite *= confidence   # baseline depth: 0.625 at 5 days .. 1.0 at 20 days
 normalized = clamp(raw_composite * 2.0, 0, 10)
 ```
 
-The `* 2.0` scaling factor is an initial heuristic. It should be recalibrated once backtesting data is available (see Next Steps).
+The confidence dampener and `* 2.0` scaling are initial heuristics; recalibrate with backtesting when you have data (see Next Steps).
 
 ### "Already Priced In" Gate
 

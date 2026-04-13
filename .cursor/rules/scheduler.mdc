@@ -22,12 +22,11 @@ Run continuously during market hours. Each cycle:
 3. Fetch option chain snapshots (paginate through all underlyings)
 4. Upsert to database
 5. Fetch earnings date for each underlying (Polygon /vX/reference/financials)
-6. Score all contracts with meaningful activity (11 factors)
+6. Score all contracts with meaningful activity (12 weighted factors + priced-in gate inside scorer)
 7. Persist all scoring results to scoring_results table
-8. Apply already-priced-in gate
-9. Send alerts for triggered signals
-10. Log cycle stats (duration, contracts scanned, alerts fired/suppressed)
-11. Sleep until 15-minute cycle interval expires (matching Polygon data delay)
+8. Trigger persistence, dedup, then send digest email for confirmed signals
+9. Log cycle stats (duration, contracts scanned, alerts fired/suppressed)
+10. Sleep until 15-minute cycle interval expires (matching Polygon data delay)
 ```
 
 ## Resilience

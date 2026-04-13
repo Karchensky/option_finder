@@ -16,10 +16,10 @@ def _make_breakdown(
         contract=f"O:{ticker}260417C00155000",
         composite_score=score,
         factors={
-            "vol_z": FactorScore(raw=5000, z_score=3.5, weight=0.18, contribution=0.63),
-            "prem_z": FactorScore(raw=2100000, z_score=2.8, weight=0.13, contribution=0.364),
+            "vol_z": FactorScore(raw=5000, z_score=3.5, weight=0.16, contribution=0.56),
+            "prem_z": FactorScore(raw=2100000, z_score=2.8, weight=0.11, contribution=0.308),
             "iv_z": FactorScore(raw=0.45, z_score=2.1, weight=0.13, contribution=0.273),
-            "vol_oi_z": FactorScore(raw=2.5, z_score=4.0, weight=0.12, contribution=0.48),
+            "vol_oi_z": FactorScore(raw=2.5, z_score=4.0, weight=0.11, contribution=0.44),
         },
         underlying_move_pct=0.5,
         already_priced_in=False,

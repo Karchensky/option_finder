@@ -22,7 +22,7 @@ Backtest against historical data stored in PostgreSQL. Never call the Polygon AP
 - **Average Return**: Mean return across all signals including full losses
 - **Profit Factor**: Sum of winning returns / abs(sum of losing returns)
 - **Time to Exit**: Average trading days from signal to 5x (winners only)
-- **Score Calibration**: Hit rate bucketed by score range (7.5-8.0, 8.0-8.5, etc.)
+- **Score Calibration**: Hit rate bucketed by score range (choose bins relative to your `ANOMALY_ALERT_MIN_SCORE`, e.g. 6.0-6.5, 6.5-7.0)
 - **Factor Attribution**: Hit rate when each factor is above/below median
 
 ## Baseline Comparison
