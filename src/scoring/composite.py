@@ -15,6 +15,7 @@ from src.scoring.factors import (
     compute_oi_change,
     compute_premium_surge,
     compute_spread,
+    compute_sweep_proxy,
     compute_time_to_expiry,
     compute_underlying_move,
     compute_vol_oi_ratio,
@@ -40,6 +41,7 @@ def score_contract(
     snap_date: date,
     days_to_earnings: int | None = None,
     chain_volume_history: list[float] | None = None,
+    otm_frac_history: list[float] | None = None,
 ) -> ScoreBreakdown:
     """Compute the full composite score for a single option contract.
 
@@ -81,12 +83,16 @@ def score_contract(
     except InsufficientDataError:
         factors["vol_oi_z"] = _zero_factor("vol_oi_z")
 
+    factors["sweep_z"] = compute_sweep_proxy(current_volume, baseline_snapshots, ticker=contract)
+
     # --- Tier 2: structural positioning ---
     factors["chain_vol_z"] = compute_chain_volume(
         chain_snapshots, chain_volume_history or [], ticker=ticker,
     )
 
-    factors["delta_conc_z"] = compute_delta_concentration(chain_snapshots, underlying_price)
+    factors["delta_conc_z"] = compute_delta_concentration(
+        chain_snapshots, underlying_price, otm_frac_history=otm_frac_history,
+    )
 
     try:
         factors["oi_z"] = compute_oi_change(current_oi, baseline_snapshots, ticker=contract)

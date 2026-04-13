@@ -125,3 +125,47 @@ class OptionsSnapshotRepo:
         )
         result = await self._session.execute(stmt)
         return [float(row[0]) for row in result.fetchall() if row[0] is not None]
+
+    async def get_otm_fraction_history(
+        self,
+        underlying_ticker: str,
+        as_of_date: date,
+        lookback_days: int = 20,
+    ) -> list[float]:
+        """Return daily deep-OTM volume fraction for an underlying over the baseline window.
+
+        Deep-OTM is defined as |delta| < 0.20.  Used by delta_conc_z to
+        z-score today's OTM concentration against its own history.
+        """
+        from sqlalchemy import case, literal_column
+
+        start_date = as_of_date - timedelta(days=lookback_days * 2)
+
+        otm_vol = func.sum(
+            case(
+                (func.abs(OptionsSnapshot.delta) < 0.20, OptionsSnapshot.volume),
+                else_=literal_column("0"),
+            )
+        ).label("otm_vol")
+        total_vol = func.sum(OptionsSnapshot.volume).label("total_vol")
+
+        stmt = (
+            select(otm_vol, total_vol)
+            .where(
+                OptionsSnapshot.underlying_ticker == underlying_ticker,
+                OptionsSnapshot.snap_date >= start_date,
+                OptionsSnapshot.snap_date < as_of_date,
+                OptionsSnapshot.volume > 0,
+                OptionsSnapshot.delta.is_not(None),
+            )
+            .group_by(OptionsSnapshot.snap_date)
+            .order_by(OptionsSnapshot.snap_date.desc())
+            .limit(lookback_days)
+        )
+        result = await self._session.execute(stmt)
+        fracs: list[float] = []
+        for row in result.fetchall():
+            otm, total = row
+            if total and total > 0:
+                fracs.append(float(otm or 0) / float(total))
+        return fracs

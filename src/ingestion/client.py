@@ -1,6 +1,7 @@
 """Shared async HTTP client for the Polygon.io API."""
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -83,6 +84,20 @@ async def polygon_get(path: str, params: dict | None = None) -> dict:
                 message=f"Polygon request failed: {exc}",
                 endpoint=path,
             ) from exc
+        except json.JSONDecodeError as exc:
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                logger.warning(
+                    "corrupt JSON from %s — retry %d/%d in %.1fs: %s",
+                    path, attempt + 1, MAX_RETRIES, delay, exc,
+                )
+                await asyncio.sleep(delay)
+                last_exc = exc
+                continue
+            raise PolygonAPIError(
+                message=f"Polygon returned corrupt JSON after {MAX_RETRIES} retries: {exc}",
+                endpoint=path,
+            ) from exc
 
     raise PolygonAPIError(
         message=f"Polygon request failed after {MAX_RETRIES} retries: {last_exc}",
@@ -107,10 +122,12 @@ async def fetch_all_pages(path: str, *, limit: int = POLYGON_PAGE_LIMIT) -> list
         last_exc: Exception | None = None
         resp: httpx.Response | None = None
 
+        data: dict = {}
         for attempt in range(MAX_RETRIES + 1):
             try:
                 resp = await client.get(path, params=params)
                 resp.raise_for_status()
+                data = resp.json()
                 break
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:
@@ -141,13 +158,26 @@ async def fetch_all_pages(path: str, *, limit: int = POLYGON_PAGE_LIMIT) -> list
                     message=f"Pagination request failed: {exc}",
                     endpoint=path,
                 ) from exc
+            except json.JSONDecodeError as exc:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY_S * (2 ** attempt)
+                    logger.warning(
+                        "corrupt JSON paginating %s — retry %d/%d in %.1fs: %s",
+                        path, attempt + 1, MAX_RETRIES, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = exc
+                    continue
+                raise PolygonAPIError(
+                    message=f"Pagination got corrupt JSON after {MAX_RETRIES} retries: {exc}",
+                    endpoint=path,
+                ) from exc
         else:
             raise PolygonAPIError(
                 message=f"Pagination failed after {MAX_RETRIES} retries: {last_exc}",
                 endpoint=path,
             )
 
-        data = resp.json()
         page_results = data.get("results") or []
         results.extend(page_results)
 

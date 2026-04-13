@@ -101,6 +101,14 @@ async def _process_underlying(
                 u_price = float(u_price_raw) if u_price_raw is not None else u_price_fallback
 
                 chain_vol_history = await opt_repo.get_chain_volume_history(underlying, snap_date)
+                otm_frac_history = await opt_repo.get_otm_fraction_history(underlying, snap_date)
+
+                dte_earnings: int | None = None
+                try:
+                    earnings_date = await fetch_next_earnings_date(underlying, as_of=snap_date)
+                    dte_earnings = days_until_earnings(earnings_date, as_of=snap_date)
+                except PolygonAPIError:
+                    logger.debug("earnings lookup failed for %s — scoring without dampener", underlying)
 
                 score_rows: list[dict] = []
 
@@ -124,8 +132,9 @@ async def _process_underlying(
                             underlying_price=u_price,
                             underlying_change_pct=u_change,
                             snap_date=snap_date,
-                            days_to_earnings=None,
+                            days_to_earnings=dte_earnings,
                             chain_volume_history=chain_vol_history,
+                            otm_frac_history=otm_frac_history,
                         )
                         local_stats["contracts_scored"] += 1
                         score_rows.append(_breakdown_to_row(breakdown, snap_date))
@@ -299,6 +308,12 @@ async def run_scan_cycle() -> dict:
                             "CONFIRMED %s after %d consecutive scans (score=%.2f)",
                             breakdown.contract, candidate.trigger_count, breakdown.composite_score,
                         )
+                    elif candidate.confirmed:
+                        confirmed_breakdowns.append(breakdown)
+                        logger.debug(
+                            "already-confirmed %s re-triggered (score=%.2f) — passing to dedup",
+                            breakdown.contract, breakdown.composite_score,
+                        )
                     elif candidate.trigger_count < TRIGGER_CONFIRM_SCANS:
                         logger.info(
                             "pending confirmation: %s scan %d/%d (score=%.2f)",
@@ -316,7 +331,7 @@ async def run_scan_cycle() -> dict:
         len(all_triggered), len(confirmed_breakdowns), TRIGGER_CONFIRM_SCANS,
     )
 
-    # 6. Dedup confirmed triggers + enrich with earnings data
+    # 6. Dedup confirmed triggers
     final_triggered: list[ScoreBreakdown] = []
     if confirmed_breakdowns:
         async with factory() as session:
@@ -330,16 +345,6 @@ async def run_scan_cycle() -> dict:
                 except Exception:
                     logger.debug("dedup error for %s", breakdown.contract, exc_info=True)
                     stats["errors"] += 1
-
-        triggered_tickers = {b.ticker for b in final_triggered}
-        for ticker in triggered_tickers:
-            try:
-                earnings_date = await fetch_next_earnings_date(ticker, as_of=snap_date)
-                dte = days_until_earnings(earnings_date, as_of=snap_date)
-                if dte is not None:
-                    logger.info("earnings proximity for %s: %+d days", ticker, dte)
-            except PolygonAPIError:
-                logger.debug("earnings lookup failed for %s", ticker, exc_info=True)
 
     # 7. Send ONE digest email
     if final_triggered:

@@ -33,16 +33,17 @@ class FactorWeight:
 
 FACTOR_WEIGHTS: tuple[FactorWeight, ...] = (
     # Tier 1 -- primary volume/flow signals
-    FactorWeight("vol_z", 0.17),
-    FactorWeight("prem_z", 0.12),
-    FactorWeight("iv_z", 0.14),     # boosted: independent signal about market expectations
-    FactorWeight("vol_oi_z", 0.12),
+    FactorWeight("vol_z", 0.16),
+    FactorWeight("prem_z", 0.11),
+    FactorWeight("iv_z", 0.13),
+    FactorWeight("vol_oi_z", 0.11),
+    FactorWeight("sweep_z", 0.09),      # volume-extremity proxy for aggressive order flow
     # Tier 2 -- structural positioning
-    FactorWeight("chain_vol_z", 0.09),  # chain-level volume context (dampens isolated spikes)
-    FactorWeight("delta_conc_z", 0.08),
-    FactorWeight("oi_z", 0.08),         # lagging indicator (prior-day settlement)
+    FactorWeight("chain_vol_z", 0.07),  # chain-level volume context (dampens isolated spikes)
+    FactorWeight("delta_conc_z", 0.07),
+    FactorWeight("oi_z", 0.07),         # lagging indicator (prior-day settlement)
     FactorWeight("earnings_z", 0.07),   # negative z-score near earnings = dampener
-    FactorWeight("tte_z", 0.06),
+    FactorWeight("tte_z", 0.05),
     # Tier 3 -- supporting context
     FactorWeight("spread_z", 0.04),
     FactorWeight("underlying_z", 0.03),

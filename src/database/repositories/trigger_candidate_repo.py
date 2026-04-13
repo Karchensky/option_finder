@@ -23,7 +23,9 @@ class TriggerCandidateRepo:
             set_={
                 "last_triggered_at": data["last_triggered_at"],
                 "trigger_count": TriggerCandidate.trigger_count + 1,
-                "peak_score": stmt.excluded.peak_score,
+                "peak_score": func.greatest(
+                    TriggerCandidate.peak_score, stmt.excluded.peak_score,
+                ),
                 "peak_factors": stmt.excluded.peak_factors,
                 "expired": False,
             },

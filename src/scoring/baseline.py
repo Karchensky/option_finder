@@ -31,6 +31,26 @@ def compute_baseline(values: list[float], ticker: str = "") -> BaselineStats:
     return BaselineStats(mean=mean, std=std, n=n)
 
 
+def compute_thin_baseline(values: list[float]) -> BaselineStats | None:
+    """Conservative baseline for 1-4 data points (below the normal threshold).
+
+    Uses a wider std estimate to produce conservative z-scores for contracts
+    with thin trading history — exactly the illiquid OTM options where
+    insider activity is most likely to appear.  Returns None when *values*
+    is empty.
+    """
+    if not values:
+        return None
+    n = len(values)
+    mean = statistics.mean(values)
+    if n == 1:
+        std = max(mean * 0.5, STD_FLOOR)
+    else:
+        raw_std = statistics.pstdev(values, mu=mean)
+        std = max(raw_std * 2.0, mean * 0.3, STD_FLOOR)
+    return BaselineStats(mean=mean, std=std, n=n)
+
+
 def z_score(observed: float, baseline: BaselineStats) -> float:
     """Compute the z-score for an observed value given baseline stats."""
     return (observed - baseline.mean) / baseline.std

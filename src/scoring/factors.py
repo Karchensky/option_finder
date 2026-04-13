@@ -3,11 +3,12 @@
 import logging
 from datetime import date
 
-from src.config.constants import FACTOR_WEIGHT_MAP, STD_FLOOR, Z_SCORE_CAP
+from src.config.constants import BASELINE_MIN_DATAPOINTS, FACTOR_WEIGHT_MAP, STD_FLOOR, Z_SCORE_CAP
 from src.database.models import OptionsSnapshot
 from src.scoring.baseline import (
     BaselineStats,
     compute_baseline,
+    compute_thin_baseline,
     extract_implied_volatility,
     extract_open_interest,
     extract_premiums,
@@ -41,9 +42,19 @@ def compute_volume_spike(
     baseline_snapshots: list[OptionsSnapshot],
     ticker: str = "",
 ) -> FactorScore:
-    """Contract volume vs 20-day average."""
+    """Contract volume vs 20-day average.
+
+    Falls back to a conservative thin-baseline heuristic for contracts
+    with 1-4 data points, capturing sudden activity in normally illiquid
+    options where insider trading often occurs.
+    """
     volumes = extract_volumes(baseline_snapshots)
-    bl = compute_baseline(volumes, ticker=ticker)
+    try:
+        bl = compute_baseline(volumes, ticker=ticker)
+    except InsufficientDataError:
+        bl = compute_thin_baseline(volumes)
+        if bl is None:
+            return _make_factor("vol_z", float(current_volume), 0.0)
     z = z_score(float(current_volume), bl)
     return _make_factor("vol_z", float(current_volume), z)
 
@@ -57,7 +68,12 @@ def compute_premium_surge(
     """Dollar premium (price * volume * 100) vs 20-day average."""
     current_premium = current_close * current_volume * 100
     premiums = extract_premiums(baseline_snapshots)
-    bl = compute_baseline(premiums, ticker=ticker)
+    try:
+        bl = compute_baseline(premiums, ticker=ticker)
+    except InsufficientDataError:
+        bl = compute_thin_baseline(premiums)
+        if bl is None:
+            return _make_factor("prem_z", current_premium, 0.0)
     z = z_score(current_premium, bl)
     return _make_factor("prem_z", current_premium, z)
 
@@ -111,6 +127,29 @@ def compute_vol_oi_ratio(
     return _make_factor("vol_oi_z", raw_ratio, z)
 
 
+def compute_sweep_proxy(
+    current_volume: int,
+    baseline_snapshots: list[OptionsSnapshot],
+    ticker: str = "",
+) -> FactorScore:
+    """Volume-extremity proxy for sweep order detection.
+
+    True sweep detection requires trade-level condition codes and
+    multi-exchange fill clustering, which we don't ingest.  As a proxy,
+    this factor contributes positively only when volume exceeds 2 sigma
+    above the baseline mean — indicating the kind of aggressive, urgent
+    execution pattern characteristic of sweep orders.
+    """
+    volumes = extract_volumes(baseline_snapshots)
+    if len(volumes) < BASELINE_MIN_DATAPOINTS:
+        return _make_factor("sweep_z", float(current_volume), 0.0)
+
+    bl = compute_baseline(volumes, ticker=ticker)
+    raw_z = z_score(float(current_volume), bl)
+    z = max(0.0, raw_z - 2.0)
+    return _make_factor("sweep_z", float(current_volume), z)
+
+
 # ---------------------------------------------------------------------------
 # Tier 2 -- Medium signal
 # ---------------------------------------------------------------------------
@@ -142,6 +181,7 @@ def compute_oi_change(
 def compute_delta_concentration(
     chain_snapshots: list[OptionsSnapshot],
     underlying_price: float,
+    otm_frac_history: list[float] | None = None,
 ) -> FactorScore:
     """Fraction of chain volume in deep-OTM contracts using delta.
 
@@ -149,8 +189,9 @@ def compute_delta_concentration(
     than a raw strike/underlying comparison). Falls back to the price-based
     method for contracts where greeks are unavailable.
 
-    High concentration of volume in deep OTM is a strong signal of
-    speculative or informed positioning.
+    When *otm_frac_history* is provided with sufficient data points,
+    the z-score is computed against the rolling baseline. Otherwise,
+    falls back to a static assumption (mean=0.15, std=0.10).
     """
     total_vol = 0
     deep_otm_vol = 0
@@ -176,7 +217,13 @@ def compute_delta_concentration(
         return _make_factor("delta_conc_z", 0.0, 0.0)
 
     otm_frac = deep_otm_vol / total_vol
-    z = (otm_frac - 0.15) / max(0.10, STD_FLOOR)
+
+    if otm_frac_history and len(otm_frac_history) >= BASELINE_MIN_DATAPOINTS:
+        bl = compute_baseline(otm_frac_history)
+        z = z_score(otm_frac, bl)
+    else:
+        z = (otm_frac - 0.15) / max(0.10, STD_FLOOR)
+
     return _make_factor("delta_conc_z", otm_frac, z)
 
 
@@ -247,11 +294,13 @@ def compute_underlying_move(
     """Stock move correlated with options bet direction.
 
     Positive contribution when stock moves in the same direction as
-    the bet (calls + stock up, puts + stock down).
+    the bet (calls + stock up, puts + stock down). Scales proportionally
+    with move magnitude — a 3% directional move produces a higher
+    z-score than a 0.5% move.
     """
     is_call = contract_type.lower() == "call"
     directional = underlying_change_pct if is_call else -underlying_change_pct
-    z = directional / max(abs(underlying_change_pct), STD_FLOOR) if underlying_change_pct != 0 else 0.0
+    z = directional / 1.0
     return _make_factor("underlying_z", underlying_change_pct, z)
 
 
