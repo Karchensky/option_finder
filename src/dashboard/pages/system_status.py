@@ -140,7 +140,7 @@ daily_df = load_daily_data_counts()
 if not daily_df.empty:
     st.dataframe(
         daily_df,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "snap_date": st.column_config.DateColumn("Date"),
             "option_rows": st.column_config.NumberColumn("Options", format="%d"),
@@ -151,7 +151,7 @@ if not daily_df.empty:
 st.subheader("Database Table Sizes")
 sizes_df = load_table_sizes()
 if not sizes_df.empty:
-    st.dataframe(sizes_df, use_container_width=True)
+    st.dataframe(sizes_df, width="stretch")
 
 # Top underlyings by volume
 st.subheader("Top Underlyings by Volume")
@@ -159,7 +159,7 @@ top_df = load_top_underlyings()
 if not top_df.empty:
     st.dataframe(
         top_df,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "total_volume": st.column_config.NumberColumn("Total Volume", format="%d"),
         },

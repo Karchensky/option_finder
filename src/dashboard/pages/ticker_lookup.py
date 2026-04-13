@@ -12,6 +12,16 @@ from sqlalchemy import text
 from src.dashboard.db import get_db
 
 
+def _safe_float(val: object, default: float = 0.0) -> float:
+    """Convert a possibly-None value to float, returning *default* when None."""
+    return float(val) if val is not None else default
+
+
+def _safe_int(val: object, default: int = 0) -> int:
+    """Convert a possibly-None value to int, returning *default* when None."""
+    return int(val) if val is not None else default
+
+
 def search_tickers(query: str) -> list[str]:
     if not query or len(query) < 1:
         return []
@@ -217,7 +227,7 @@ if not stock_df.empty:
         name="Price",
     ))
     fig.update_layout(title=f"{selected_ticker} Price (30d)", height=350, margin=dict(t=40, b=20), xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 # --- Chain-Level Context ---
 st.subheader("Chain Volume Context (30d)")
@@ -271,7 +281,7 @@ if not vol_df.empty:
         margin=dict(t=40, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 # --- Trigger History ---
 trigger_df = load_trigger_history(selected_ticker, 30)
@@ -282,7 +292,7 @@ if not trigger_df.empty:
         st.markdown(f"**{len(confirmed)} confirmed triggers** in the last 30 days")
     st.dataframe(
         trigger_df,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "peak_score": st.column_config.NumberColumn("Peak Score", format="%.2f"),
             "alert_date": st.column_config.DateColumn("Date"),
@@ -317,7 +327,7 @@ else:
                 fig_strike.add_vline(x=current_price, line_dash="dash", line_color="blue",
                                      annotation_text=f"${current_price:.0f}")
         fig_strike.update_layout(height=300, margin=dict(t=40, b=20))
-        st.plotly_chart(fig_strike, use_container_width=True)
+        st.plotly_chart(fig_strike, width="stretch")
 
     tab_calls, tab_puts = st.tabs(["Calls", "Puts"])
     display_cols = [
@@ -339,14 +349,14 @@ else:
         if calls.empty:
             st.info("No call options for this date.")
         else:
-            st.dataframe(calls, use_container_width=True, column_config=col_config, hide_index=True)
+            st.dataframe(calls, width="stretch", column_config=col_config, hide_index=True)
 
     with tab_puts:
         puts = chain_df[chain_df["contract_type"] == "put"][existing]
         if puts.empty:
             st.info("No put options for this date.")
         else:
-            st.dataframe(puts, use_container_width=True, column_config=col_config, hide_index=True)
+            st.dataframe(puts, width="stretch", column_config=col_config, hide_index=True)
 
     # Factor breakdown for triggered contracts on this chain
     triggered_in_chain = chain_df[chain_df["triggered"] == True]  # noqa: E712
@@ -365,22 +375,22 @@ else:
                 with col_chart:
                     fig = _render_factor_chart(factors, title=row["option_ticker"])
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
 
                 with col_detail:
                     st.markdown("**Snapshot at Trigger Time**")
                     detail = {
-                        "Type": str(row.get("contract_type", "")).upper(),
-                        "Strike": f"${float(row.get('strike_price', 0)):,.2f}",
-                        "Expiration": str(row.get("expiration_date", "")),
-                        "Volume": f"{int(row.get('volume', 0)):,}",
-                        "Open Interest": f"{int(row.get('open_interest', 0)):,}",
-                        "IV": f"{float(row.get('implied_volatility', 0)):.4f}",
-                        "Bid": f"${float(row.get('bid', 0)):,.2f}",
-                        "Ask": f"${float(row.get('ask', 0)):,.2f}",
-                        "Last": f"${float(row.get('close', 0)):,.2f}",
-                        "Underlying": f"${float(row.get('underlying_price', 0)):,.2f}",
-                        "Delta": f"{float(row.get('delta', 0)):.4f}" if row.get("delta") else "N/A",
+                        "Type": str(row.get("contract_type") or "").upper(),
+                        "Strike": f"${_safe_float(row.get('strike_price')):,.2f}",
+                        "Expiration": str(row.get("expiration_date") or ""),
+                        "Volume": f"{_safe_int(row.get('volume')):,}",
+                        "Open Interest": f"{_safe_int(row.get('open_interest')):,}",
+                        "IV": f"{_safe_float(row.get('implied_volatility')):.4f}",
+                        "Bid": f"${_safe_float(row.get('bid')):,.2f}",
+                        "Ask": f"${_safe_float(row.get('ask')):,.2f}",
+                        "Last": f"${_safe_float(row.get('close')):,.2f}",
+                        "Underlying": f"${_safe_float(row.get('underlying_price')):,.2f}",
+                        "Delta": f"{_safe_float(row.get('delta')):.4f}" if row.get("delta") is not None else "N/A",
                     }
                     for k, v in detail.items():
                         st.text(f"{k:>16s}: {v}")

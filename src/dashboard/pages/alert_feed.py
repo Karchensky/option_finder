@@ -225,7 +225,7 @@ if not daily_stats.empty:
         labels={"snap_date": "Date", "contracts_scored": "Contracts Scored"},
     )
     fig.update_layout(height=300, margin=dict(t=40, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 # --- Trigger Candidates (persistence view) ---
 st.subheader("Trigger Candidates (Today)")
@@ -248,7 +248,7 @@ else:
         st.dataframe(
             confirmed[["underlying_ticker", "option_ticker", "peak_score", "trigger_count",
                         "first_triggered_at", "last_triggered_at"]],
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "peak_score": st.column_config.NumberColumn("Peak Score", format="%.2f"),
             },
@@ -259,7 +259,7 @@ else:
         st.dataframe(
             pending[["underlying_ticker", "option_ticker", "peak_score", "trigger_count",
                       "first_triggered_at"]],
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "peak_score": st.column_config.NumberColumn("Peak Score", format="%.2f"),
             },
@@ -274,7 +274,7 @@ if status_filter:
     else:
         st.dataframe(
             alerts_df,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "composite_score": st.column_config.NumberColumn("Score", format="%.2f"),
                 "alert_date": st.column_config.DateColumn("Date"),
@@ -298,7 +298,7 @@ else:
     existing_cols = [c for c in display_cols if c in scoring_df.columns]
     st.dataframe(
         scoring_df[existing_cols],
-        use_container_width=True,
+        width="stretch",
         column_config={
             "composite_score": st.column_config.NumberColumn("Score", format="%.2f"),
             "strike_price": st.column_config.NumberColumn("Strike", format="$%.2f"),
@@ -324,7 +324,7 @@ else:
                 with col_left:
                     fig = _render_factor_chart(factors, title=f"Factor Contributions — {row['option_ticker']}")
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
 
                 with col_right:
                     st.markdown("**Contract Details**")
@@ -354,4 +354,4 @@ else:
                             "Weight": f"{f.get('weight', 0):.2f}",
                             "Contribution": f"{f.get('contribution', 0):+.4f}",
                         })
-                    st.dataframe(pd.DataFrame(factor_table), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(factor_table), width="stretch", hide_index=True)
