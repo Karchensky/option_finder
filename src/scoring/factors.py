@@ -129,10 +129,17 @@ def compute_vol_oi_ratio(
         # Conservative fallback: ratio < 1.0 is unremarkable; scale gently above 1.0.
         # A ratio of 1.5 → z≈1.3, ratio of 3.0 → z≈3.3, ratio of 4.25 → z=5.0 (cap).
         z = max(0.0, (raw_ratio - 0.5) / 0.75) if raw_ratio > 0.5 else 0.0
-        return _make_factor("vol_oi_z", raw_ratio, z)
+    else:
+        bl = compute_baseline(ratios, ticker=ticker)
+        z = z_score(raw_ratio, bl)
 
-    bl = compute_baseline(ratios, ticker=ticker)
-    z = z_score(raw_ratio, bl)
+    # Domain-aware sliding cap: a vol/OI ratio below ~2.0 shouldn't
+    # saturate the z-score — it doesn't represent aggressive new
+    # positioning (ratio > 1.0 = more volume than existing OI).
+    # Cap scales linearly: 0.37 → 0.93, 1.0 → 2.5, 2.0 → 5.0.
+    domain_cap = min(Z_SCORE_CAP, max(0.5, raw_ratio * 2.5))
+    z = min(z, domain_cap)
+
     return _make_factor("vol_oi_z", raw_ratio, z)
 
 
